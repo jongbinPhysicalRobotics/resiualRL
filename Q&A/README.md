@@ -1,0 +1,25 @@
+# Q&A — 날짜별 질문 기록
+
+구현을 이해하기 위해 물어본 것들을 **날짜별 파일**로 쌓는다.
+답변은 전부 **실행/측정 결과에 근거**하고, 코드는 `[파일.py:줄](../MPC/src/파일.py#L줄)` 로 연결한다.
+claude.ai 본 채팅에 그대로 붙여넣어 공부할 수 있도록 각 항목은 자기완결적으로 쓴다.
+
+| 날짜 | 파일 | 다룬 것 |
+|---|---|---|
+| 2026-09-17 (목) | [2026-09-17.md](2026-09-17.md) | **Q1 배포 RL 정책 계측 — G1 은 1.29 m/s 가능(팔 없이)** / Q2 보폭은 속도에 선형(19.3−4.33v cm) / Q3 **주기는 고정이 맞다(791 ms)** — 속도 함수는 보폭·stance_frac / Q4 비행 없이 1 m/s 가능 / Q5 **토크 초과는 QP 가 아니라 스윙 임피던스** / **Q6 용어 정리 — 횡오프셋·CoP·DS·sf·w** / Q7 **옆으로 휘는 원인 = 관측에 yaw 가 없음** (방향 유지는 정책 밖에서) |
+| 2026-09-16 (화) | [2026-09-16.md](2026-09-16.md) | Q1 뷰어가 느린 이유·발이 모였다 나가는 모션 / Q2 reference 제약조건 정독 / Q3 착지속도 0 의 물리 + 베지어 비교 / Q4 h_swing 0.1 강건성 / Q5 **CoP 포화율은 속도추종과 함께 읽을 것** / Q6 스윙시간 0.5 s 기각 / Q7 각=pelvis·각속도=전신 조합 / **Q8 ω 불일치의 정체 — 다리와 상체가 상쇄** |
+| 2026-09-15 (월) | [2026-09-15.md](2026-09-15.md) | Q1 토크 사상(Jᵀ)·PD / Q2 몸통 흔들림 / Q3 reference 게인·가중치 / Q4 capture point vs Raibert / Q5–Q6 MPC 주기와 병렬화 / Q7 residual 게인 / Q8 벌어지는 보폭 / **Q9 속도 벽 돌파 0.3→0.5 m/s** |
+
+## 다른 문서와의 역할 분담
+
+| 문서 | 역할 |
+|---|---|
+| `Q&A/<날짜>.md` | **"이게 왜/어떻게 돌아가는가"** — 개념 질문과 답 (이 폴더) |
+| [MPC_NOTES.md](../MPC/MPC_NOTES.md) | 구현·디버깅 서사 (시간순, 절 번호로 참조) |
+| [PHYSICS_MAP.md](../MPC/PHYSICS_MAP.md) | 물리 근사의 현재 상태 지도 (스냅샷) |
+| [REFERENCE_ANALYSIS.md](../REFERENCE_ANALYSIS.md) | reference 코드 분석 |
+| [CODE_MAP.md](../MPC/CODE_MAP.md) | 코드 읽는 순서 안내 (파일 18개 중 핵심 5개) |
+| [ARM_SWING_PLAN.md](../MPC/ARM_SWING_PLAN.md) | 팔 흔들기 — CAM 논문 분석 + 우리 팔 권한 실측 |
+| [RESIDUAL_NOTES.md](../MPC%20+%20RL/RESIDUAL_NOTES.md) | Residual MPC 논문 이식 노트 (residual 착수 시) |
+| [VERIFY_REPORT.md](../MPC/VERIFY_REPORT.md) | 적대적 검증 리포트 원문 |
+| [README.md](../README.md) | 작업 로그 + 2026-09-15 이전의 개념 정리 |
