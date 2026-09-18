@@ -128,7 +128,7 @@ def main():
         mujoco.mj_step(m, d)
         counter += 1
         if counter % DEC == 0:
-            if a.hold > 0.0:
+            if a.hold > 0.0 and abs(a.wz) < 1e-9:
                 Rp = d.xmat[PELVIS].reshape(3, 3)
                 e = (np.arctan2(Rp[1,0], Rp[0,0]) - YAW_REF + np.pi) % (2*np.pi) - np.pi
                 cmd[2] = float(np.clip(-a.hold * e, -0.5, 0.5))

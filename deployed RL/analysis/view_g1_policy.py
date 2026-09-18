@@ -49,7 +49,7 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
         d.ctrl[:] = (target - d.qpos[7:]) * kps + (0.0 - d.qvel[6:]) * kds
         mujoco.mj_step(m, d); cnt += 1
         if cnt % DEC == 0:
-            if a.hold > 0.0:                      # 방향 유지 외부 루프
+            if a.hold > 0.0 and abs(a.wz) < 1e-9:                      # 방향 유지 외부 루프
                 R = d.xmat[PEL].reshape(3, 3)
                 yaw = np.arctan2(R[1, 0], R[0, 0])
                 err = (yaw - yaw0 + np.pi) % (2 * np.pi) - np.pi
