@@ -128,6 +128,8 @@
 | **`10_constraint_check.py`** | **제약 18행이 옳은지 LP 로 검증.** 9/18 Q4 §5 |
 | `11_walk_srb_upper.py` | 상체 SRB 실험 (부정적 결과). **훅 2개만 재정의**한 구조 |
 | **`12_contact_analysis.py`** | **착지~stance 의 명령 vs 실측.** 9/21 Q5 — 하중 인계 구멍 |
+| `13_sidew_ab.py` | 보폭 A/B — 실측 v·착지 보폭·롤 CoP(실측/명령). 9/21 Q7 |
+| **`14_toe_lift.py`** | **착지 후 발 앞 들림.** 발가락/뒤꿈치 Fz 분리·발 pitch·명령 CoP x. 9/21 Q8 |
 
 **추천 3개**: `03` → `05` → `10`. 컨트롤러의 세 축(사상·부호·제약)이 잡힌다.
 **보폭 작업 전이라면** `12` 도 (지금 상태의 기준선이 된다).
@@ -137,6 +139,7 @@
 .venv/Scripts/python.exe MPC/src/05_sign_check.py
 .venv/Scripts/python.exe MPC/src/10_constraint_check.py
 .venv/Scripts/python.exe MPC/src/12_contact_analysis.py --vx 0.5 --plot
+.venv/Scripts/python.exe MPC/src/14_toe_lift.py --vx 0.5
 ```
 
 ---
