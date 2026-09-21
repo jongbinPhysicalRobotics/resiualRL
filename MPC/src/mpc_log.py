@@ -9,6 +9,8 @@
 
 npz 키: t, x, x_ref, u, tau, solve_ms, violation, fz_contact, ncon,
         x_labels, u_labels  (플롯은 src/plot_log.py)
+  9/21 추가 (09_walk.headless): swing_s(2) 스윙 진행도, foot_ref(6) 스윙 참조궤적
+        [발 site 기준, stance 중 NaN], foot_pos(6) 실제 발 site, p_land(6) 착지 목표
 csv: t + x(13) + x_ref(13) + u(12) + solve_ms + violation  — 엑셀에서 바로 열림
 """
 from __future__ import annotations

@@ -451,9 +451,21 @@ def headless(vx=0.0, seconds=12.0, legmass=1.0, kp_up=60.0, swing_id=False,
         mujoco.mj_forward(m, d)
         if k % DECIM == 0:
             x0, xr0, c0 = ctl.update_mpc(d, t)
+            # 스윙 참조궤적(발 site 기준)·실제 발 위치·착지점 — 추종 분석용 (Q&A 9/21 Q3)
+            feet_now = mpc_srb.get_foot_positions(m, d)
+            sw_s = np.zeros(2)
+            f_ref = np.full((2, 3), np.nan)        # stance 중엔 NaN (플롯에서 끊김)
+            for i in range(2):
+                if not ctl.gait.in_stance(t, i):
+                    sw_s[i] = ctl.gait.swing_phase(t, i)
+                    f_ref[i] = ctl.sw[i].target(sw_s[i], ctl.p_land[i],
+                                                ctl.gait.T_swing)[0]
             log.add(t=t, x=x0, x_ref=xr0, u=ctl.wr.reshape(-1),
                     tau=ctl.torque(d, t), contact=c0.astype(float),
-                    foot_z=[mpc_srb.get_foot_positions(m, d)[i, 2] for i in range(2)],
+                    foot_z=feet_now[:, 2],
+                    swing_s=sw_s, foot_ref=f_ref.reshape(-1),
+                    foot_pos=feet_now.reshape(-1),
+                    p_land=np.asarray(ctl.p_land).reshape(-1),
                     solve_ms=ctl.last_info["solve_ms"],
                     violation=ctl.last_info["violation"], ncon=d.ncon)
             if t > RAMP_T1 + 1.0:
@@ -501,10 +513,58 @@ def headless(vx=0.0, seconds=12.0, legmass=1.0, kp_up=60.0, swing_id=False,
     if vx_hist:
         print(f"  정착 후 평균 vx = {np.mean(vx_hist):.3f} m/s (명령 {vx})"
               f"   CoM y 진폭 = ±{(np.max(py_hist)-np.min(py_hist))/2*100:.1f} cm")
-    sms = np.stack(log.rows["solve_ms"])
-    print(f"  QP: 평균 {sms.mean():.1f} ms, 최대 {sms.max():.1f} ms")
+    sms = np.stack(log.rows["solve_ms"]); tt = np.stack(log.rows["t"])
+    med = float(np.median(sms)); thr = max(3.0 * med, 20.0)
+    print(f"  QP: 평균 {sms.mean():.1f} ms, 중앙값 {med:.1f}, p99 {np.percentile(sms, 99):.1f},"
+          f" 최대 {sms.max():.1f} ms")
+    spike = np.flatnonzero(sms > thr)
+    if len(spike):
+        head = ", ".join(f"{tt[j]:.2f}s({sms[j]:.0f})" for j in spike[:8])
+        print(f"      튀는 지점 {len(spike)}회 (>{thr:.0f} ms): {head}"
+              f"{' ...' if len(spike) > 8 else ''}")
     log.save()
     return ok
+
+
+def _draw_swing(v, ctl, t, n_seg=24):
+    """뷰어에 스윙 참조궤적(선) + 현재 목표(작은 구) + 착지점(빨간 구) 을 그린다.
+    기준점은 발 site(발목 원점) — 스윙 제어기가 실제로 추종하는 점 그대로
+    (발바닥 중심은 발이 수평일 때 여기서 앞 3.5 cm·아래 3.5 cm 상수 오프셋. Q&A 9/21 Q4).
+    왼발 초록, 오른발 파랑."""
+    scn = v.user_scn
+    scn.ngeom = 0
+
+    def sphere(p, r, rgba):
+        if scn.ngeom >= scn.maxgeom:
+            return
+        g = scn.geoms[scn.ngeom]
+        mujoco.mjv_initGeom(g, mujoco.mjtGeom.mjGEOM_SPHERE, np.array([r, 0.0, 0.0]),
+                            np.asarray(p, float), np.eye(3).flatten(),
+                            np.asarray(rgba, np.float32))
+        scn.ngeom += 1
+
+    def line(a, b, rgba, w=3.0):
+        if scn.ngeom >= scn.maxgeom:
+            return
+        g = scn.geoms[scn.ngeom]
+        mujoco.mjv_initGeom(g, mujoco.mjtGeom.mjGEOM_LINE, np.zeros(3), np.zeros(3),
+                            np.eye(3).flatten(), np.asarray(rgba, np.float32))
+        mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_LINE, w,
+                             np.asarray(a, float), np.asarray(b, float))
+        scn.ngeom += 1
+
+    T_sw = ctl.gait.T_swing
+    for i in range(2):
+        if ctl.gait.in_stance(t, i):
+            continue
+        col = (0.2, 0.9, 0.3, 0.9) if i == 0 else (0.3, 0.5, 1.0, 0.9)
+        pts = [ctl.sw[i].target(s, ctl.p_land[i], T_sw)[0]
+               for s in np.linspace(0.0, 1.0, n_seg + 1)]
+        for a, b in zip(pts[:-1], pts[1:]):
+            line(a, b, col)
+        s_now = ctl.gait.swing_phase(t, i)
+        sphere(ctl.sw[i].target(s_now, ctl.p_land[i], T_sw)[0], 0.012, col)
+        sphere(ctl.p_land[i], 0.015, (1.0, 0.3, 0.2, 0.9))
 
 
 def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
@@ -532,6 +592,8 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
             mujoco.mj_forward(m, d)
             if k % DECIM == 0:
                 ctl.update_mpc(d, t)
+                with v.lock():
+                    _draw_swing(v, ctl, t)      # 스윙 참조궤적 오버레이 (Q&A 9/21)
             d.ctrl[:] = ctl.torque(d, t)
             mujoco.mj_step(m, d)
             v.sync()
