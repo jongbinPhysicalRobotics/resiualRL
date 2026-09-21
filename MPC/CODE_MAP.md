@@ -130,6 +130,7 @@
 | **`12_contact_analysis.py`** | **착지~stance 의 명령 vs 실측.** 9/21 Q5 — 하중 인계 구멍 |
 | `13_sidew_ab.py` | 보폭 A/B — 실측 v·착지 보폭·롤 CoP(실측/명령). 9/21 Q7 |
 | **`14_toe_lift.py`** | **착지 후 발 앞 들림.** 발가락/뒤꿈치 Fz 분리·발 pitch·명령 CoP x. 9/21 Q8 |
+| `15_toe_speed.py` | 속도별 발 앞 들림 + 스텝 단위 속도 손실 (병렬 실행). 9/21 Q9 |
 
 **추천 3개**: `03` → `05` → `10`. 컨트롤러의 세 축(사상·부호·제약)이 잡힌다.
 **보폭 작업 전이라면** `12` 도 (지금 상태의 기준선이 된다).
@@ -140,6 +141,7 @@
 .venv/Scripts/python.exe MPC/src/10_constraint_check.py
 .venv/Scripts/python.exe MPC/src/12_contact_analysis.py --vx 0.5 --plot
 .venv/Scripts/python.exe MPC/src/14_toe_lift.py --vx 0.5
+.venv/Scripts/python.exe MPC/src/15_toe_speed.py --vx 0.3 0.5 0.6 0.7 --seconds 120
 ```
 
 ---

@@ -15,6 +15,7 @@
 | `unitree_rl_gym/` | [공식 저장소](https://github.com/unitreerobotics/unitree_rl_gym) clone. 정책은 `deploy/pre_train/g1/motion.pt` (12-dof 다리 전용) |
 | `analysis/run_g1_policy.py` | 헤드리스 계측 러너 — 속도·pitch·CoP 이용률·지지구간 |
 | `analysis/detail.py` | 상세 — gait 타이밍, ω(pelvis) vs ω(전신 L), 착지점 |
+| `analysis/toe_lift.py` | 착지 직후 발가락/뒤꿈치 하중·발 pitch·실현 CoP — 뒤꿈치 착지 확인 (Q&A 9/21 Q9) |
 | [ANALYSIS.md](ANALYSIS.md) | 전체 측정 결과와 해석 |
 
 ## 실행
