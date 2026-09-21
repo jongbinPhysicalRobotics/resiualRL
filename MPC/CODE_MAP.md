@@ -146,7 +146,7 @@
 ```bash
 .venv/Scripts/python.exe MPC/src/09_walk.py --view --vx 0.5 \
     --uppd 300 --swingid --softland --lamswing --wn 30 --zeta 0.7 \
-    --sf 0.57 --qpy 300 --swingyaw
+    --sf 0.57 --qpy 300 --swingyaw --sidew 13
 ```
 
 플래그가 많은데 **전부 실험으로 얻은 것**이고 각각 근거가 있다:
@@ -160,6 +160,7 @@
 | `--sf 0.57` | 스윙 0.2 → 0.344 s | **요약 §4 (속도 벽 돌파)** |
 | `--qpy 300` | 횡 위치 가중치 | 요약 §1 |
 | `--swingyaw` | 스윙 발 yaw 정렬 상시 | [9/16 Q2](../Q&A/2026-09-16.md) |
+| **`--sidew 13`** | **공칭 보폭 13 cm** (기하 기본 23.7) | **[9/21 Q7](../Q&A/2026-09-21.md)** — 0.6 추종 82→91 %, 0.7 40→67 % |
 
 > ⚠ **기본값은 아직 옛날 값**이다 (`soft_land=False` 등). 플래그 없이 돌리면
 > 9/14 이전 컨트롤러가 나온다 — 비교 실험용으로 일부러 남겨둔 것.
@@ -184,7 +185,7 @@
 
 | 우선순위 | 할 일 | 코드 위치 |
 |---|---|---|
-| **1** | **보폭 `w(v)`** | [gait.py L87](src/gait.py#L87) `hip = p_com + R @ side_offset` / [09_walk.py L71](src/09_walk.py#L71) `side_offset` 스냅샷 |
+| ~~1~~ ✅ | ~~보폭~~ → **`--sidew 13` 채택 (9/21 Q7)** | [09_walk.py](src/09_walk.py) `side_width()` / `side_offset_at()` |
 | **2** | **`Fz,min` 램프** | [mpc_qp.py L54](src/mpc_qp.py#L54) `−Fz ≤ −fz_min` 행 + `SRBParams.fz_min` |
 | 3 | `sf(v)` 속도 함수 | [gait.py L22](src/gait.py#L22) `Gait.stance_frac` |
 | 4 | 스윙 토크 클램프 | [gait.py L234](src/gait.py#L234) `SwingController.wrench()` 반환 직전 |

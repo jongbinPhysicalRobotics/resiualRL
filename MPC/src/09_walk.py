@@ -42,7 +42,7 @@ class WalkController:
                  soft_land=False, lam_swing=False, wn_swing=100.0,
                  zeta_swing=0.5, cap_y=None, cycle=0.8, stance_frac=0.75,
                  lip_exact=False, q_py=None, td_mode="cont", gate_ff=True, gate_sy=True, swing_h=0.05,
-                 jdot=False):
+                 jdot=False, side_w=None):
         self.m = m
         self.adof = actuated_dofs(m)
         # SRB 재료 훅 — 서브클래스(11_walk_srb_upper 등)가 '무엇을 강체로 볼
@@ -72,6 +72,21 @@ class WalkController:
         R2 = mpc_srb.rz(self.yaw0)[:2, :2]
         self.side_offset = [np.append(R2.T @ (feet[i, :2] - x0[3:5]), 0.0)
                             for i in range(2)]          # CoM 기준 발 중립 오프셋
+        # ★ 보폭 (Q&A 9/17 Q2·Q3, 9/18, SUMMARY §5). 위 side_offset 의 y 는 G1 'stand'
+        # 키프레임(hip_roll=0 → 발이 엉덩이 바로 아래)에서 물려받은 ±11.8 cm — 걷기용으로
+        # 고른 값이 아니다. 착지 보폭 27 cm 의 87 % 가 이것. 배포 RL 정책(9/17)은 같은
+        # 기하에서 출발해 15.6 cm(0.5 m/s) 로 걷고, 보폭↔횡 CoP 이용률 상관이 +0.951.
+        #   side_w=None  : 기하 기본값 유지 (23.7 cm)
+        #   side_w=float : 고정 보폭 [m]  (예: 0.176 → 오프셋 ±8.8 cm)
+        #   side_w="auto": w(v) = 0.1933 − 0.0433·v_ramped, [0.14, 0.20] 클램프 (RL 회귀 R²=0.94)
+        # 실측 (9/21 Q7, 13_sidew_ab.py): **13 cm 가 최적점** — 120 s 전 항목 통과,
+        #   0.6 추종 82→91 %, 0.7 추종 40→67 % (뒤로 젖힘 −12.3→−6°), y 진폭 0.3/0.5 에서 −35 %.
+        #   11~12 는 roll σ 가 다시 튄다 (min_y_sep 하한 근처). auto 는 RL 계수라 우리 최적보다 넓다.
+        # 기전: 횡 LIP 에서 |y−p| ∝ 보폭 → Fy RMS 40→17 N, v_y RMS −74 % →
+        #   capture 항(v_y/ω₀)이 착지 목표를 쓸어내는 폭 7.9→1.8 cm. '보정을 억제'(td_mode,
+        #   실패)가 아니라 '보정의 필요를 줄인' 것. ⚠ 롤 CoP 이용률은 안 줄었다 (예측 기각).
+        self.side_w = side_w
+        self._side_geom = [o.copy() for o in self.side_offset]
         self.z_ground = feet[0, 2]
         self.sw = [SwingController(), SwingController()]
         # 흔들림 개선 실험 두 갈래 (Q&A Q3, MPC_NOTES 23절):
@@ -157,6 +172,27 @@ class WalkController:
     def wz(self, t):
         return self.wz_cmd * self.ramp(t)
 
+    def side_width(self, t):
+        """공칭 보폭 [m] (좌우 발 간격). None 이면 기하 기본값."""
+        if self.side_w is None:
+            return None
+        if isinstance(self.side_w, str):          # "auto" — 속도 함수
+            v = abs(self.vx_cmd) * self.ramp(t)
+            return float(np.clip(0.1933 - 0.0433 * v, 0.14, 0.20))
+        return float(self.side_w)
+
+    def side_offset_at(self, t):
+        """발 i 의 공칭 오프셋 (몸 yaw frame, 3-벡터). y 만 보폭 정책으로 덮어쓴다."""
+        w = self.side_width(t)
+        if w is None:
+            return self._side_geom
+        out = []
+        for i in range(2):
+            o = self._side_geom[i].copy()
+            o[1] = np.sign(self._side_geom[i][1]) * 0.5 * w
+            out.append(o)
+        return out
+
     def yaw_ref(self, t):
         """명령 요각속도를 적분한 참조 yaw (램프 구간 해석적 적분)."""
         if abs(self.wz_cmd) < 1e-12:
@@ -200,7 +236,7 @@ class WalkController:
                 # 벗어난 지점으로 끌어당겨 발산시킨다 (±34 cm 실측). 조합에선 해제.
                 combo = abs(self.wz_cmd) > 1e-12 and abs(self.vx_cmd) > 1e-9
                 raw = raibert_target(
-                    x0[3:6], x0[9:12], yaw_pl, self.side_offset[i], vc,
+                    x0[3:6], x0[9:12], yaw_pl, self.side_offset_at(t)[i], vc,
                     self.gait.T_stance, z_com=x0[5], z_ground=self.z_ground,
                     anchor_xy=None if combo else [x0[3], self.com0[1]],
                     cap_y_max=self.cap_y, lip_exact=self.lip_exact)
@@ -428,7 +464,7 @@ def headless(vx=0.0, seconds=12.0, legmass=1.0, kp_up=60.0, swing_id=False,
              soft_land=False, lam_swing=False, wn_swing=100.0,
              zeta_swing=0.5, cap_y=None, cycle=0.8, stance_frac=0.75,
              lip_exact=False, q_py=None, td_mode="cont",
-             gate_ff=True, gate_sy=True, swing_h=0.05, jdot=False):
+             gate_ff=True, gate_sy=True, swing_h=0.05, jdot=False, side_w=None):
     """ctor: WalkController 서브클래스 주입 (예: 11_walk_srb_upper).
     variant: 로그 파일명 접두어 — baseline 로그와 섞이지 않게."""
     m, d = g1_model.load_torque()
@@ -448,7 +484,7 @@ def headless(vx=0.0, seconds=12.0, legmass=1.0, kp_up=60.0, swing_id=False,
                                    lip_exact=lip_exact, q_py=q_py,
                                    td_mode=td_mode, gate_ff=gate_ff,
                                    gate_sy=gate_sy, swing_h=swing_h,
-                                   jdot=jdot)
+                                   jdot=jdot, side_w=side_w)
     tag = "inplace" if abs(vx) < 1e-9 else "vx" + f"{vx:g}".replace(".", "p")
     if abs(wz) > 1e-12:
         tag += "_wz" + f"{wz:g}".replace(".", "p").replace("-", "m")
@@ -465,6 +501,9 @@ def headless(vx=0.0, seconds=12.0, legmass=1.0, kp_up=60.0, swing_id=False,
     prev_st = [True, True]
     vx_hist, py_hist = [], []
 
+    _w = ctl.side_width(RAMP_T1 + 1.0)
+    print(f"  공칭 보폭: {'기하 기본 ' + f'{200*abs(ctl._side_geom[0][1]):.1f}' if _w is None else f'{100*_w:.1f}'} cm"
+          f"{'  (auto: w(v))' if isinstance(side_w, str) else ''}")
     print(f"  t[s]  pelvis_z   com_x    com_y   vx     yaw[°] yaw_e[°]  |mz|  접촉  solve_ms")
     next_rep = 0.0
     x0 = None
@@ -592,7 +631,7 @@ def _draw_swing(v, ctl, t, n_seg=24):
 def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
          soft_land=False, lam_swing=False, wn_swing=100.0, zeta_swing=0.5,
          cap_y=None, cycle=0.8, stance_frac=0.75, lip_exact=False, q_py=None,
-         td_mode="cont", gate_ff=True, gate_sy=True, swing_h=0.05, jdot=False):
+         td_mode="cont", gate_ff=True, gate_sy=True, swing_h=0.05, jdot=False, side_w=None, follow=True):
     import mujoco.viewer
     m, d = g1_model.load_torque()
     g1_model.set_crouch(m, d)
@@ -605,11 +644,16 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
                                    lip_exact=lip_exact, q_py=q_py,
                                    td_mode=td_mode, gate_ff=gate_ff,
                                    gate_sy=gate_sy, swing_h=swing_h,
-                                   jdot=jdot)
+                                   jdot=jdot, side_w=side_w)
     print(f"뷰어: gait MPC (vx_cmd={vx}, uppd={kp_up}, swingid={swing_id}). 창을 닫으면 종료.")
     k = 0
     t0 = 0.0
     with mujoco.viewer.launch_passive(m, d) as v:
+        if follow:
+            # 트래킹 카메라: 골반을 따라가되 마우스 회전·줌은 그대로 된다 (--nofollow 로 끔)
+            v.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+            v.cam.trackbodyid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "pelvis")
+            v.cam.distance, v.cam.elevation, v.cam.azimuth = 3.0, -15.0, 120.0
         while v.is_running():
             t = t0 + k * m.opt.timestep
             mujoco.mj_forward(m, d)
@@ -656,6 +700,11 @@ if __name__ == "__main__":
     gsy = not (_ng or "--swingyaw" in sys.argv)    # 스윙 yaw 정렬 항상 켜기
     swh = float(sys.argv[sys.argv.index("--swingh") + 1]) if "--swingh" in sys.argv else 0.05
     jd = "--jdot" in sys.argv           # J̇q̇ 보상 (기본 꺼짐 — 아래 주석)
+    fol = "--nofollow" not in sys.argv   # 뷰어 카메라가 로봇을 따라감 (기본 켜짐)
+    sw_ = None
+    if "--sidew" in sys.argv:            # 보폭 [cm] 또는 auto (Q&A 9/21)
+        _a = sys.argv[sys.argv.index("--sidew") + 1]
+        sw_ = "auto" if _a == "auto" else float(_a) / 100.0
     exp_tags = [t for t, on in (("sl", sl), ("lam", lam),
                                 ("capy", cpy is not None),
                                 (f"sf{sfr:g}".replace(".", "p"),
@@ -671,7 +720,7 @@ if __name__ == "__main__":
         view(vx, kp_up=kpu, swing_id=sid, wz=wzc, yaw_hold=yh,
              soft_land=sl, lam_swing=lam, wn_swing=wns, zeta_swing=zts,
              cap_y=cpy, cycle=cyc, stance_frac=sfr, lip_exact=lipx, q_py=qpy,
-             td_mode=tdm, gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd)
+             td_mode=tdm, gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd, side_w=sw_, follow=fol)
     else:
         ok = headless(vx=vx, seconds=secs, legmass=legm,
                       kp_up=kpu, swing_id=sid, wz=wzc, yaw_hold=yh,
@@ -679,7 +728,7 @@ if __name__ == "__main__":
                       soft_land=sl, lam_swing=lam, wn_swing=wns,
                       zeta_swing=zts, cap_y=cpy, cycle=cyc, stance_frac=sfr,
                       lip_exact=lipx, q_py=qpy, td_mode=tdm,
-                      gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd)
+                      gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd, side_w=sw_)
         step = "STEP 5 (제자리 스텝)" if abs(vx) < 1e-9 else f"STEP 6 (전진 {vx} m/s)"
         print()
         print(step + (" 통과 ✓" if ok else " 실패"))
