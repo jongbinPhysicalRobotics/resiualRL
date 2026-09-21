@@ -41,7 +41,8 @@ class WalkController:
                  wz_cmd=0.0, yaw_hold=True,
                  soft_land=False, lam_swing=False, wn_swing=100.0,
                  zeta_swing=0.5, cap_y=None, cycle=0.8, stance_frac=0.75,
-                 lip_exact=False, q_py=None, td_mode="cont", gate_ff=True, gate_sy=True, swing_h=0.05):
+                 lip_exact=False, q_py=None, td_mode="cont", gate_ff=True, gate_sy=True, swing_h=0.05,
+                 jdot=False):
         self.m = m
         self.adof = actuated_dofs(m)
         # SRB 재료 훅 — 서브클래스(11_walk_srb_upper 등)가 '무엇을 강체로 볼
@@ -108,6 +109,19 @@ class WalkController:
         # 가속을 역동역학으로 미리 감당. M 이 밀집이라 stance·base 관절에도 보상이
         # 들어가 '실현 wrench ≠ 명령 wrench' 누수를 막는다. J̇q̇ 항은 생략(근사).
         self.swing_id = swing_id
+        # J̇q̇ 보상 (9/18 Q2, 9/21). p̈ = J q̈ + J̇ q̇ 이므로 정확한 역기구학은
+        # q̈ = J⁺(a_ff − J̇q̇) 인데 원래 J̇q̇ 를 생략했었다. 측정하니 그 항이
+        # a_ff 의 69 %(중앙값 61, 상위10% 150) — "작을 것"이라는 가정이 틀렸다.
+        # mj_jacDot 이 있고 비용도 1.5 us(500 Hz 발 2개 = +0.15 %) 라 안 쓸 이유가 없다.
+        # 의도한 효과는 났다 — z 추종오차 0.25→0.21 cm, 스윙토크 첨두 2.53→2.31배.
+        # ★ 그런데 120초·40초 A/B 에서 **횡 진동이 5/5 속도 전부 악화**했고
+        #   그 폭이 속도에 단조 증가한다 (0.2 +0 % → 0.6 +32 %, 0.6 속도도 −6 %).
+        #   기전 추정: q̈ 평균이 68.5→79.0 으로 커져 M(밀집)을 통한 stance 다리
+        #   교차항이 커지는데, 롤 CoP 가 0.3 m/s 부터 이미 포화라 여유가 없다.
+        #   0.2 에서 차이가 0 인 것이 이 해석을 지지한다 (그 속도엔 횡 여유가 있음).
+        # → **기본 꺼짐.** 보폭 축소(1순위)로 횡 여유가 생긴 뒤 재시험할 것.
+        #   `--jdot` 으로 켠다. 식 자체는 이쪽이 옳다 (9/21 Q6).
+        self.jdot = jdot
         self.leg_dofs = [list(range(6, 12)), list(range(12, 18))]
         self._Mfull = np.zeros((m.nv, m.nv))
         # stance 발 yaw 유지 (reference 분석 8절 #1): 착지 순간 yaw 를 기록하고
@@ -363,8 +377,15 @@ class WalkController:
                                                  self.gait.T_swing)
                     dofs = self.leg_dofs[i]
                     J6 = np.vstack([jacp, jacr])[:, dofs]
-                    qdd, *_ = np.linalg.lstsq(
-                        J6, np.concatenate([a_ff, np.zeros(3)]), rcond=None)
+                    rhs = np.concatenate([a_ff, np.zeros(3)])
+                    if self.jdot:
+                        # p̈ = J q̈ + J̇ q̇  →  J q̈ = a_ff − J̇ q̇
+                        sid_j = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, s_name)
+                        jdp = np.zeros((3, m.nv)); jdr = np.zeros((3, m.nv))
+                        mujoco.mj_jacDot(m, d, jdp, jdr, d.site_xpos[sid_j],
+                                         m.site_bodyid[sid_j])
+                        rhs -= np.vstack([jdp, jdr])[:, dofs] @ d.qvel[dofs]
+                    qdd, *_ = np.linalg.lstsq(J6, rhs, rcond=None)
                     nq = np.linalg.norm(qdd)
                     if nq > 300.0:                    # 특이자세 보호
                         qdd *= 300.0 / nq
@@ -407,7 +428,7 @@ def headless(vx=0.0, seconds=12.0, legmass=1.0, kp_up=60.0, swing_id=False,
              soft_land=False, lam_swing=False, wn_swing=100.0,
              zeta_swing=0.5, cap_y=None, cycle=0.8, stance_frac=0.75,
              lip_exact=False, q_py=None, td_mode="cont",
-             gate_ff=True, gate_sy=True, swing_h=0.05):
+             gate_ff=True, gate_sy=True, swing_h=0.05, jdot=False):
     """ctor: WalkController 서브클래스 주입 (예: 11_walk_srb_upper).
     variant: 로그 파일명 접두어 — baseline 로그와 섞이지 않게."""
     m, d = g1_model.load_torque()
@@ -426,7 +447,8 @@ def headless(vx=0.0, seconds=12.0, legmass=1.0, kp_up=60.0, swing_id=False,
                                    cycle=cycle, stance_frac=stance_frac,
                                    lip_exact=lip_exact, q_py=q_py,
                                    td_mode=td_mode, gate_ff=gate_ff,
-                                   gate_sy=gate_sy, swing_h=swing_h)
+                                   gate_sy=gate_sy, swing_h=swing_h,
+                                   jdot=jdot)
     tag = "inplace" if abs(vx) < 1e-9 else "vx" + f"{vx:g}".replace(".", "p")
     if abs(wz) > 1e-12:
         tag += "_wz" + f"{wz:g}".replace(".", "p").replace("-", "m")
@@ -570,7 +592,7 @@ def _draw_swing(v, ctl, t, n_seg=24):
 def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
          soft_land=False, lam_swing=False, wn_swing=100.0, zeta_swing=0.5,
          cap_y=None, cycle=0.8, stance_frac=0.75, lip_exact=False, q_py=None,
-         td_mode="cont", gate_ff=True, gate_sy=True, swing_h=0.05):
+         td_mode="cont", gate_ff=True, gate_sy=True, swing_h=0.05, jdot=False):
     import mujoco.viewer
     m, d = g1_model.load_torque()
     g1_model.set_crouch(m, d)
@@ -582,7 +604,8 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
                                    cycle=cycle, stance_frac=stance_frac,
                                    lip_exact=lip_exact, q_py=q_py,
                                    td_mode=td_mode, gate_ff=gate_ff,
-                                   gate_sy=gate_sy, swing_h=swing_h)
+                                   gate_sy=gate_sy, swing_h=swing_h,
+                                   jdot=jdot)
     print(f"뷰어: gait MPC (vx_cmd={vx}, uppd={kp_up}, swingid={swing_id}). 창을 닫으면 종료.")
     k = 0
     t0 = 0.0
@@ -632,6 +655,7 @@ if __name__ == "__main__":
     gff = not (_ng or "--footframe" in sys.argv)   # 제약 frame 항상 켜기
     gsy = not (_ng or "--swingyaw" in sys.argv)    # 스윙 yaw 정렬 항상 켜기
     swh = float(sys.argv[sys.argv.index("--swingh") + 1]) if "--swingh" in sys.argv else 0.05
+    jd = "--jdot" in sys.argv           # J̇q̇ 보상 (기본 꺼짐 — 아래 주석)
     exp_tags = [t for t, on in (("sl", sl), ("lam", lam),
                                 ("capy", cpy is not None),
                                 (f"sf{sfr:g}".replace(".", "p"),
@@ -647,7 +671,7 @@ if __name__ == "__main__":
         view(vx, kp_up=kpu, swing_id=sid, wz=wzc, yaw_hold=yh,
              soft_land=sl, lam_swing=lam, wn_swing=wns, zeta_swing=zts,
              cap_y=cpy, cycle=cyc, stance_frac=sfr, lip_exact=lipx, q_py=qpy,
-             td_mode=tdm, gate_ff=gff, gate_sy=gsy, swing_h=swh)
+             td_mode=tdm, gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd)
     else:
         ok = headless(vx=vx, seconds=secs, legmass=legm,
                       kp_up=kpu, swing_id=sid, wz=wzc, yaw_hold=yh,
@@ -655,7 +679,7 @@ if __name__ == "__main__":
                       soft_land=sl, lam_swing=lam, wn_swing=wns,
                       zeta_swing=zts, cap_y=cpy, cycle=cyc, stance_frac=sfr,
                       lip_exact=lipx, q_py=qpy, td_mode=tdm,
-                      gate_ff=gff, gate_sy=gsy, swing_h=swh)
+                      gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd)
         step = "STEP 5 (제자리 스텝)" if abs(vx) < 1e-9 else f"STEP 6 (전진 {vx} m/s)"
         print()
         print(step + (" 통과 ✓" if ok else " 실패"))
