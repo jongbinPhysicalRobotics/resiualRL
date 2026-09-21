@@ -72,7 +72,7 @@ class Gait:
 # ---------------------------------------------------------------------------
 def raibert_target(p_com, v_com, yaw, side_offset, v_cmd, T_stance, z_com,
                    anchor_xy=None, k_anchor=0.15, max_step=0.30, min_y_sep=0.06,
-                   z_ground=0.0331, cap_y_max=None, lip_exact=False):
+                   z_ground=0.0331, cap_y_max=None, lip_exact=False, ff_scale=1.0):
     """착지점 (world, capture point 기반).
 
         p = CoM + R·offset + v_cmd·T_st/2 + (v − v_cmd)/ω₀ + k_a(anchor − CoM)
@@ -101,6 +101,10 @@ def raibert_target(p_com, v_com, yaw, side_offset, v_cmd, T_stance, z_com,
     else:
         ff_coef = T_stance / 2.0
         k_cap = 1.0 / w0
+    # 착지 거리 배율 (Q&A 9/21 Q11). reference MIT 는 착지 순간 CoM 대비 발 거리를
+    # 속도와 무관하게 ~6 cm 로 묶는데 우리는 발 중앙 기준 12~13 cm (0.5~0.6 m/s).
+    # 전진 중립항만 줄이고 capture 게인(속도 피드백)은 그대로 둔다.
+    ff_coef *= ff_scale
     cap = (v - v_cmd[:2]) * k_cap
     if cap_y_max is not None:
         # 횡(몸 y) 기여만 상한 — capture 는 '정지'의 답이라 주기 보행의 횡

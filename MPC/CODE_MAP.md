@@ -130,6 +130,7 @@
 | **`12_contact_analysis.py`** | **착지~stance 의 명령 vs 실측.** 9/21 Q5 — 하중 인계 구멍 |
 | `13_sidew_ab.py` | 보폭 A/B — 실측 v·착지 보폭·롤 CoP(실측/명령). 9/21 Q7 |
 | **`14_toe_lift.py`** | **착지 후 발 앞 들림.** 발가락/뒤꿈치 Fz 분리·발 pitch·명령 CoP x. 9/21 Q8 |
+| **`16_td_ab.py`** | **착지 거리 A/B** (`td_scale`·`td_dx`) + stance/swing 토크 초과. 9/21 Q11 |
 | `15_toe_speed.py` | 속도별 발 앞 들림 + 스텝 단위 속도 손실 (병렬 실행). 9/21 Q9 |
 
 **추천 3개**: `03` → `05` → `10`. 컨트롤러의 세 축(사상·부호·제약)이 잡힌다.
@@ -142,6 +143,7 @@
 .venv/Scripts/python.exe MPC/src/12_contact_analysis.py --vx 0.5 --plot
 .venv/Scripts/python.exe MPC/src/14_toe_lift.py --vx 0.5
 .venv/Scripts/python.exe MPC/src/15_toe_speed.py --vx 0.3 0.5 0.6 0.7 --seconds 120
+.venv/Scripts/python.exe MPC/src/16_td_ab.py --vx 0.6 0.7 --var 1:0 1.25:0 --seconds 120
 ```
 
 ---
@@ -151,7 +153,7 @@
 ```bash
 .venv/Scripts/python.exe MPC/src/09_walk.py --view --vx 0.5 \
     --uppd 300 --swingid --softland --lamswing --wn 30 --zeta 0.7 \
-    --sf 0.57 --qpy 300 --swingyaw --sidew 13
+    --sf 0.57 --qpy 300 --swingyaw --sidew 13 --tdscale 1.25
 ```
 
 플래그가 많은데 **전부 실험으로 얻은 것**이고 각각 근거가 있다:
@@ -166,6 +168,7 @@
 | `--qpy 300` | 횡 위치 가중치 | 요약 §1 |
 | `--swingyaw` | 스윙 발 yaw 정렬 상시 | [9/16 Q2](../Q&A/2026-09-16.md) |
 | **`--sidew 13`** | **공칭 보폭 13 cm** (기하 기본 23.7) | **[9/21 Q7](../Q&A/2026-09-21.md)** — 0.6 추종 82→91 %, 0.7 40→67 % |
+| **`--tdscale 1.25`** | **착지 전진 중립항 1.25 배** (발을 더 앞에) | **[9/21 Q11](../Q&A/2026-09-21.md)** — 120 s, 0.6 추종 92→103 %, 0.7 67→98 % |
 
 > ⚠ **기본값은 아직 옛날 값**이다 (`soft_land=False` 등). 플래그 없이 돌리면
 > 9/14 이전 컨트롤러가 나온다 — 비교 실험용으로 일부러 남겨둔 것.
@@ -193,5 +196,5 @@
 | ~~1~~ ✅ | ~~보폭~~ → **`--sidew 13` 채택 (9/21 Q7)** | [09_walk.py](src/09_walk.py) `side_width()` / `side_offset_at()` |
 | **2** | **`Fz,min` 램프** | [mpc_qp.py L54](src/mpc_qp.py#L54) `−Fz ≤ −fz_min` 행 + `SRBParams.fz_min` |
 | 3 | `sf(v)` 속도 함수 | [gait.py L22](src/gait.py#L22) `Gait.stance_frac` |
-| 4 | 스윙 토크 클램프 | [gait.py L234](src/gait.py#L234) `SwingController.wrench()` 반환 직전 |
+| 4 | 스윙 토크 클램프 (9/21 Q11 재측정: 여전히 2.5×, 0.6 이상에선 스윙 발목·hip_yaw 도 초과) | [gait.py L234](src/gait.py#L234) `SwingController.wrench()` 반환 직전 |
 | 5 | `J̇q̇` 보상 | [09_walk.py L361](src/09_walk.py#L361) `swing_id` 블록 (`mj_jacDot` 사용) |
