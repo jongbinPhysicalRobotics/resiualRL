@@ -133,7 +133,8 @@
 | **`16_td_ab.py`** | **착지 거리 A/B** (`td_scale`·`td_dx`) + stance/swing 토크 초과. 9/21 Q11 |
 | `17_knee_geometry.py` | 무릎 기하 — 무릎 간격·방향·hip_roll/yaw, MPC 와 배포 RL 비교. 9/22 Q1 |
 | **`18_gait_quality.py`** | **걸음 품질 한 표** — 추종 + 발 튐 + 무릎 + yaw + 토크. **채택 판정은 이 표로.** 9/22 Q1 |
-| `viewer_hud.py` | 뷰어 왼쪽 위 글자 — sim/real time, 배속, 속도, 추종 %. MPC·RL 뷰어 공용. 뷰어는 ~60 Hz 갱신 + 실시간 맞춤 (`--fast` 로 끔). 9/22 Q5·Q6 |
+| `viewer_hud.py` | 뷰어 왼쪽 위 글자 (sim/real time, 배속, 속도, 추종 %), CPU 벤치, **Windows 부스트** `boost_process`. MPC·RL 뷰어 공용. 9/22 Q5~Q7 |
+| `20_timing_log.py` | 창 없이 120 s 시간 기록 — MPC 호출별 조립·quadprog·반복 수, 1 s 마다 배속·CPU 벤치·GC. 9/22 Q7 |
 | `19_stance_geometry.py` | 이중지지 순간 발–CoM–골반 배치, 실제 지지·스윙·이중지지 시간 (접촉 기준), MPC vs RL. 9/22 Q4 |
 | `15_toe_speed.py` | 속도별 발 앞 들림 + 스텝 단위 속도 손실 (병렬 실행). 9/21 Q9 |
 
@@ -149,6 +150,7 @@
 .venv/Scripts/python.exe MPC/src/15_toe_speed.py --vx 0.3 0.5 0.6 0.7 --seconds 120
 .venv/Scripts/python.exe MPC/src/16_td_ab.py --vx 0.6 0.7 --var 1:0 1.25:0 --seconds 120
 .venv/Scripts/python.exe MPC/src/18_gait_quality.py --vx 0.5 0.7 --var "tds=1.25,copm=0.9,wzp=1" --seconds 120
+.venv/Scripts/python.exe MPC/src/20_timing_log.py --vx 0.7 --seconds 120 --out MPC/logs/timing_0p7.npz
 ```
 
 ---
@@ -206,3 +208,6 @@
 | 3 | `sf(v)` 속도 함수 | [gait.py L22](src/gait.py#L22) `Gait.stance_frac` |
 | 4 | 스윙 토크 클램프 (9/21 Q11 재측정: 여전히 2.5×, 0.6 이상에선 스윙 발목·hip_yaw 도 초과) | [gait.py L234](src/gait.py#L234) `SwingController.wrench()` 반환 직전 |
 | 5 | `J̇q̇` 보상 | [09_walk.py L361](src/09_walk.py#L361) `swing_id` 블록 (`mj_jacDot` 사용) |
+
+
+> **뷰어 옵션 (9/22 Q6·Q7)**: 기본 = Windows 부스트 + 화면 갱신 ~29 Hz + 궤적은 갱신 때만 + 실시간 맞춤. `--noboost` · `--syncevery N` (500/N Hz) · `--drawmpc` · `--fast` (안 기다림) · `--lite` (그림자·반사 끔, 효과 불분명) · `--vsec S` (S 초 뒤 자동 종료) · `--timelog 파일` (뷰어 구간별 시간 기록).

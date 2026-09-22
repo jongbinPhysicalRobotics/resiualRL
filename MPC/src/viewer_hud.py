@@ -48,3 +48,45 @@ class ViewerHUD:
                 labels.append(a_); values.append(b_)
         viewer.set_texts((mujoco.mjtFontScale.mjFONTSCALE_150, mujoco.mjtGridPos.mjGRID_TOPLEFT,
                           "\n".join(labels), "\n".join(values)))
+
+
+def cpu_bench():
+    """고정 작업 시간 [ms] — CPU 가 느려졌는지 보는 지표 (20_timing_log 와 같은 작업)."""
+    import time
+    t0 = time.perf_counter()
+    A = np.arange(200 * 108, dtype=float).reshape(200, 108) % 7.0
+    for _ in range(20):
+        (A.T * 1.1) @ A
+    s_ = 0
+    for i in range(20000):
+        s_ += i
+    return 1000 * (time.perf_counter() - t0)
+
+
+def boost_process():
+    """Windows: 프로세스 우선순위 '높음', 프로세스·현재 스레드의 전원 스로틀링(EcoQoS) 끔,
+    현재 스레드 우선순위 '가장 높음'. 하이브리드 CPU 에서 Windows 가 계산 스레드를 효율 코어·
+    낮은 클럭으로 돌리는 것을 막으려는 것 (Q&A 9/22 Q7). 성공한 항목 수를 돌려준다."""
+    import sys
+    if sys.platform != "win32":
+        return 0
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetCurrentProcess.restype = wintypes.HANDLE
+    k32.GetCurrentThread.restype = wintypes.HANDLE
+    k32.SetPriorityClass.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    k32.SetThreadPriority.argtypes = [wintypes.HANDLE, ctypes.c_int]
+    k32.SetProcessInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    k32.SetThreadInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+
+    class PT(ctypes.Structure):
+        _fields_ = [("Version", wintypes.ULONG), ("ControlMask", wintypes.ULONG),
+                    ("StateMask", wintypes.ULONG)]
+    hp, ht = k32.GetCurrentProcess(), k32.GetCurrentThread()
+    st = PT(1, 0x1, 0x0)                         # 실행 속도 스로틀링: 제어함 · 끔
+    ok = [bool(k32.SetPriorityClass(hp, 0x00000080)),                                  # HIGH_PRIORITY_CLASS
+          bool(k32.SetProcessInformation(hp, 4, ctypes.byref(st), ctypes.sizeof(st))),  # ProcessPowerThrottling
+          bool(k32.SetThreadInformation(ht, 3, ctypes.byref(st), ctypes.sizeof(st))),   # ThreadPowerThrottling
+          bool(k32.SetThreadPriority(ht, 2))]                                           # THREAD_PRIORITY_HIGHEST
+    return sum(ok)

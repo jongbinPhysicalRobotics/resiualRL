@@ -684,7 +684,8 @@ from viewer_hud import ViewerHUD      # 뷰어 글자 표시 (Q&A 9/22 Q5)
 def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
          soft_land=False, lam_swing=False, wn_swing=100.0, zeta_swing=0.5,
          cap_y=None, cycle=0.8, stance_frac=0.75, lip_exact=False, q_py=None,
-         td_mode="cont", gate_ff=True, gate_sy=True, swing_h=0.05, jdot=False, side_w=None, follow=True, realtime=True,
+         td_mode="cont", gate_ff=True, gate_sy=True, swing_h=0.05, jdot=False, side_w=None, follow=True, realtime=True, max_sim=None, timelog=None,
+         sync_every=17, draw_at_sync=True, boost=True, lite=False,
          td_scale=1.0, td_dx=0.0, cop_margin=1.0, du_f=0.0, du_m=0.0, wz_pelvis=0.0,
          wx_pelvis=0.0, wy_pelvis=0.0):
     import mujoco.viewer
@@ -708,7 +709,18 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
     k = 0
     t0 = 0.0
     import time as _time
-    SYNC_EVERY = 8                              # 500 Hz / 8 ≈ 62 Hz 화면 갱신
+    # 뷰어 기본값 (Q&A 9/22 Q7): 화면 갱신 ~30 Hz, 궤적 그리기는 갱신 때만, Windows 부스트.
+    # 부스트 없이는 뷰어가 떠 있는 동안 Windows 가 계산 스레드를 느리게 돌려 (같은 고정 계산이
+    # 3 → 8~9 ms) sim 시간이 실제 시간에 계속 뒤처졌다 (배속 0.4~0.55). 부스트 켜면 1.0.
+    SYNC_EVERY = sync_every                     # 500 Hz / 17 ≈ 29 Hz 화면 갱신
+    if lite:
+        # 렌더링 가볍게 (Q&A 9/22 Q7): 바닥 반사·그림자가 GPU 부하의 큰 몫이고, 노트북은 CPU 와
+        # 내장 GPU 가 전력 한도를 나눠 써서 렌더링이 무거우면 MPC 계산 클럭이 떨어진다.
+        m.light_castshadow[:] = 0
+        m.mat_reflectance[:] = 0.0
+    if boost:
+        from viewer_hud import boost_process
+        print(f"  프로세스 부스트 (우선순위 높음 + 스로틀링 끔): {boost_process()}")
     with mujoco.viewer.launch_passive(m, d) as v:
         hud = ViewerHUD(m, vx)
         wall0 = _time.perf_counter()
@@ -717,25 +729,55 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
             v.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
             v.cam.trackbodyid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "pelvis")
             v.cam.distance, v.cam.elevation, v.cam.azimuth = 3.0, -15.0, 120.0
+        # 뷰어 시간 기록 (Q&A 9/22 Q7): sim 1 s 마다 실제 걸린 시간과 구간별 몫
+        pc = _time.perf_counter
+        spw = int(round(1.0 / m.opt.timestep))
+        acc = dict(mpc=0.0, draw=0.0, torque=0.0, hud=0.0, step=0.0, sync=0.0, sleep=0.0)
+        tl, w_prev = [], pc()
         while v.is_running():
             t = t0 + k * m.opt.timestep
-            mujoco.mj_forward(m, d)
+            a_ = pc(); mujoco.mj_forward(m, d); acc["step"] += pc() - a_
             if k % DECIM == 0:
-                ctl.update_mpc(d, t)
-                with v.lock():
-                    _draw_swing(v, ctl, t)      # 스윙 참조궤적 오버레이 (Q&A 9/21)
-            d.ctrl[:] = ctl.torque(d, t)
-            hud.update(v, d, t, k)              # sim/실제 시간·속도 표시 (Q&A 9/22 Q5)
-            mujoco.mj_step(m, d)
+                a_ = pc(); ctl.update_mpc(d, t); acc["mpc"] += pc() - a_
+                if not draw_at_sync:
+                    a_ = pc()
+                    with v.lock():
+                        _draw_swing(v, ctl, t)  # 스윙 참조궤적 오버레이 (Q&A 9/21)
+                    acc["draw"] += pc() - a_
+            a_ = pc(); d.ctrl[:] = ctl.torque(d, t); acc["torque"] += pc() - a_
+            a_ = pc(); hud.update(v, d, t, k); acc["hud"] += pc() - a_   # sim/실제 시간·속도 (Q5)
+            a_ = pc(); mujoco.mj_step(m, d); acc["step"] += pc() - a_
             k += 1
             # 화면 갱신은 ~60 Hz 면 충분하다 — 500 Hz 스텝마다 sync 하면 그리기가 계산을
             # 잡아먹는다. 계산이 실시간보다 빠르면 기다려서 sim 시간 = 실제 시간 (Q&A 9/22 Q6).
             if k % SYNC_EVERY == 0:
-                v.sync()
+                if draw_at_sync:                # 궤적은 화면 갱신 때만 그려도 충분 (잠금 횟수↓)
+                    a_ = pc()
+                    with v.lock():
+                        _draw_swing(v, ctl, t)
+                    acc["draw"] += pc() - a_
+                a_ = pc(); v.sync(); acc["sync"] += pc() - a_
                 if realtime:
-                    ahead = k * m.opt.timestep - (_time.perf_counter() - wall0)
+                    ahead = k * m.opt.timestep - (pc() - wall0)
                     if ahead > 0:
-                        _time.sleep(ahead)
+                        a_ = pc(); _time.sleep(ahead); acc["sleep"] += pc() - a_
+            if k % spw == 0:
+                now = pc()
+                row = [k * m.opt.timestep, now - w_prev, now - wall0] + [1000 * x for x in acc.values()]
+                if timelog:
+                    from viewer_hud import cpu_bench
+                    row.append(cpu_bench())     # CPU 속도 지표 (창 시간에서 뺌)
+                    wall0 += pc() - now
+                tl.append(row)
+                for key in acc:
+                    acc[key] = 0.0
+                w_prev = pc()
+            if max_sim is not None and k * m.opt.timestep >= max_sim:
+                break
+    if timelog:
+        np.savez(timelog, tl=np.array(tl), cols=np.array(["t", "wall", "wall_total"] + list(acc.keys()) + ["bench"]),
+                 vx=vx, realtime=realtime)
+        print(f"  뷰어 시간 기록 저장: {timelog}")
 
 
 if __name__ == "__main__":
@@ -785,6 +827,12 @@ if __name__ == "__main__":
     wxp = float(sys.argv[sys.argv.index("--wxpel") + 1]) if "--wxpel" in sys.argv else 0.0   # ω_x (roll)
     wyp = float(sys.argv[sys.argv.index("--wypel") + 1]) if "--wypel" in sys.argv else 0.0   # ω_y (pitch)
     rt = "--fast" not in sys.argv       # 뷰어: 실시간 맞춤 (기본). --fast 면 계산되는 만큼 빨리
+    vsec = float(sys.argv[sys.argv.index("--vsec") + 1]) if "--vsec" in sys.argv else None   # 뷰어 자동 종료 [sim s]
+    vlog = sys.argv[sys.argv.index("--timelog") + 1] if "--timelog" in sys.argv else None     # 뷰어 시간 기록 파일
+    vsyn = int(sys.argv[sys.argv.index("--syncevery") + 1]) if "--syncevery" in sys.argv else 17  # 화면 갱신 = 500/N Hz
+    dsyn = "--drawmpc" not in sys.argv  # 스윙 궤적 오버레이: 기본은 화면 갱신 때만 (--drawmpc 면 MPC 마다)
+    bst = "--noboost" not in sys.argv   # Windows 우선순위 높음 + 전원 스로틀링 끔 (기본 켬)
+    lit = "--lite" in sys.argv          # 렌더링 가볍게 (그림자·바닥 반사 끔)
     exp_tags = [t for t, on in (("sl", sl), ("lam", lam),
                                 ("capy", cpy is not None),
                                 (f"sf{sfr:g}".replace(".", "p"),
@@ -800,7 +848,8 @@ if __name__ == "__main__":
         view(vx, kp_up=kpu, swing_id=sid, wz=wzc, yaw_hold=yh,
              soft_land=sl, lam_swing=lam, wn_swing=wns, zeta_swing=zts,
              cap_y=cpy, cycle=cyc, stance_frac=sfr, lip_exact=lipx, q_py=qpy,
-             td_mode=tdm, gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd, side_w=sw_, follow=fol, realtime=rt,
+             td_mode=tdm, gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd, side_w=sw_, follow=fol, realtime=rt, max_sim=vsec, timelog=vlog,
+             sync_every=vsyn, draw_at_sync=dsyn, boost=bst, lite=lit,
              td_scale=tds, td_dx=tdx, cop_margin=cpm, du_f=duf, du_m=dum, wz_pelvis=wzp,
              wx_pelvis=wxp, wy_pelvis=wyp)
     else:
