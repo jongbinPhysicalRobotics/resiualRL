@@ -124,6 +124,9 @@ class WrenchMPC:
         self.R = np.diag(R_DEFAULT if r_diag is None else np.asarray(r_diag, float))
         self.Q_bar = np.kron(np.eye(self.N), self.Q)
         self.R_bar = np.kron(np.eye(self.N), self.R)
+        # 대각 벡터 (solve_gait 가속, Q&A 9/22 Q6) — Q·R 은 대각이라 조밀 곱이 필요 없다
+        self.q_bar = np.tile(np.diag(self.Q), self.N)
+        self.r_bar = np.tile(np.diag(self.R), self.N)
 
         Cf, df = foot_constraints(params, psi=psi0)
         self.Cf, self.df = Cf, df                       # gait 모드에서 재사용
@@ -263,20 +266,29 @@ class WrenchMPC:
                 B_qp[NX * k:NX * (k + 1), NU * j:NU * (j + 1)] = blk
                 blk = Ad @ blk
 
-        H = 2.0 * (B_qp.T @ self.Q_bar @ B_qp + self.R_bar)
-        g = 2.0 * B_qp.T @ self.Q_bar @ (A_qp @ x0 - X_ref.reshape(-1)) \
-            - 2.0 * self.R_bar @ u_ref_traj.reshape(-1)
+        # ★ 스윙 발 변수는 QP 에서 아예 뺀다 (Q&A 9/22 Q6). 예전엔 변수를 두고 등식 u=0
+        #   으로 묶었다 — 같은 문제라 해가 같고 (벤치 차이 0), 변수 192 → ~108 개로 줄어
+        #   quadprog 가 약 3 배 빠르다. 스윙 열은 위에서 Bc 를 0 으로 만들어 B_qp 에서도 0.
+        nU = NU * N
+        free_mask = np.repeat(np.asarray(contact, bool).reshape(-1), NU_PER_FOOT)
+        free = np.flatnonzero(free_mask)
+        eq_idx = np.flatnonzero(~free_mask)
+        B_r = B_qp[:, free]
+        q, r = self.q_bar, self.r_bar[free]
+        H = 2.0 * ((B_r.T * q) @ B_r)
+        H[np.diag_indices_from(H)] += 2.0 * r
+        g = 2.0 * B_r.T @ (q * (A_qp @ x0 - X_ref.reshape(-1))) \
+            - 2.0 * r * u_ref_traj.reshape(-1)[free]
         if self.du_w is not None and np.any(self.du_w > 0):
-            nU = NU * N
             D = np.eye(nU) - np.eye(nU, k=-NU)          # 행 k: u_k − u_{k−1}
             e = np.zeros(nU)
             if self.u_prev is not None:
                 e[:NU] = self.u_prev                    # u_0 − u_prev
             else:
                 D[:NU, :] = 0.0
-            Wd = np.tile(self.du_w, N)
-            DW = D.T * Wd                               # Dᵀ diag(W)
-            H = H + 2.0 * DW @ D
+            D_r = D[:, free]
+            DW = D_r.T * np.tile(self.du_w, N)          # D_rᵀ diag(W)
+            H = H + 2.0 * DW @ D_r
             g = g - 2.0 * DW @ e
         H = 0.5 * (H + H.T)
 
@@ -288,32 +300,44 @@ class WrenchMPC:
         if psi_feet is None:
             psi_feet = (psi, psi)
         Cf_i, df_i = zip(*(foot_constraints(self.p, psi=pf) for pf in psi_feet))
-        eq_idx = []                       # 0 으로 고정할 변수 인덱스
-        Ci_rows, di = [], []
-        for k in range(N):
-            for i in range(N_FEET):
-                base = NU * k + NU_PER_FOOT * i
-                if contact[k, i]:
-                    row = np.zeros((Cf_i[i].shape[0], NU * N))
-                    row[:, base:base + NU_PER_FOOT] = Cf_i[i]
-                    Ci_rows.append(row)
-                    di.append(df_i[i])
-                else:
-                    eq_idx.extend(range(base, base + NU_PER_FOOT))
-        C_in = np.vstack(Ci_rows)
-        d_in = np.concatenate(di)
+        blocks = [(k, i) for k in range(N) for i in range(N_FEET) if contact[k, i]]
+        nr = Cf_i[0].shape[0]
+        C_in = np.zeros((nr * len(blocks), nU))
+        for b_, (k, i) in enumerate(blocks):
+            base = NU * k + NU_PER_FOOT * i
+            C_in[nr * b_:nr * (b_ + 1), base:base + NU_PER_FOOT] = Cf_i[i]
+        d_in = np.concatenate([df_i[i] for (_, i) in blocks])
 
-        U = self._solve_qp_eq(H, g, eq_idx, C_in, d_in)
+        u_r = self._solve_qp_ineq(H, g, C_in[:, free], d_in)
+        U = np.zeros(nU)
+        U[free] = u_r
         u0 = U[:NU]
         self.u_prev = u0.copy()
         info = {
             "solve_ms": (time.perf_counter() - t0) * 1e3,
             "violation": float((C_in @ U - d_in).max()),
-            "eq_violation": float(np.abs(U[eq_idx]).max()) if eq_idx else 0.0,
+            "eq_violation": float(np.abs(U[eq_idx]).max()) if len(eq_idx) else 0.0,
             "solver": self.solver_name,
         }
         self.last = {"U": U, "Bd": Bd, "contact": contact}
         return u0, U, info
+
+    def _solve_qp_ineq(self, H, g, C, d):
+        """min ½uᵀHu+gᵀu  s.t. C·u ≤ d  (등식 없음 — 스윙 변수는 이미 제거됨)."""
+        try:
+            u, *_ = quadprog.solve_qp(H, -g, -C.T, -d, 0)
+            self.solver_name = "quadprog"
+            return u
+        except Exception:               # noqa: BLE001
+            import scipy.sparse as sp
+            import osqp
+            prob = osqp.OSQP()
+            prob.setup(P=sp.csc_matrix(H), q=g, A=sp.csc_matrix(C),
+                       l=-np.inf * np.ones(len(d)), u=d,
+                       verbose=False, eps_abs=1e-7, eps_rel=1e-7)
+            res = prob.solve()
+            self.solver_name = "osqp"
+            return np.asarray(res.x)
 
     def _solve_qp_eq(self, H, g, eq_idx, C_in, d_in):
         """min ½uᵀHu+gᵀu  s.t. u[eq_idx]=0, C_in·u ≤ d_in."""

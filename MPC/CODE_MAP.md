@@ -133,6 +133,7 @@
 | **`16_td_ab.py`** | **착지 거리 A/B** (`td_scale`·`td_dx`) + stance/swing 토크 초과. 9/21 Q11 |
 | `17_knee_geometry.py` | 무릎 기하 — 무릎 간격·방향·hip_roll/yaw, MPC 와 배포 RL 비교. 9/22 Q1 |
 | **`18_gait_quality.py`** | **걸음 품질 한 표** — 추종 + 발 튐 + 무릎 + yaw + 토크. **채택 판정은 이 표로.** 9/22 Q1 |
+| `viewer_hud.py` | 뷰어 왼쪽 위 글자 — sim/real time, 배속, 속도, 추종 %. MPC·RL 뷰어 공용. 뷰어는 ~60 Hz 갱신 + 실시간 맞춤 (`--fast` 로 끔). 9/22 Q5·Q6 |
 | `19_stance_geometry.py` | 이중지지 순간 발–CoM–골반 배치, 실제 지지·스윙·이중지지 시간 (접촉 기준), MPC vs RL. 9/22 Q4 |
 | `15_toe_speed.py` | 속도별 발 앞 들림 + 스텝 단위 속도 손실 (병렬 실행). 9/21 Q9 |
 

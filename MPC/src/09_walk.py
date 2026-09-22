@@ -12,7 +12,14 @@
 """
 from __future__ import annotations
 
+import os
 import sys
+
+# 작은 행렬(~200×200)에 BLAS 다중 스레드를 쓰면 스레드 깨우기 비용으로 MPC 풀이가 가끔
+# 수십~수백 ms 튄다 (0.7 m/s 실측: p99 154 ms → 35 ms, 배속 0.33 → 0.41). numpy 를
+# 부르기 전에 1 스레드로 고정 (Q&A 9/22 Q6). 이미 설정돼 있으면 그대로 둔다.
+for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")
 
 import numpy as np
 import mujoco
@@ -677,7 +684,7 @@ from viewer_hud import ViewerHUD      # 뷰어 글자 표시 (Q&A 9/22 Q5)
 def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
          soft_land=False, lam_swing=False, wn_swing=100.0, zeta_swing=0.5,
          cap_y=None, cycle=0.8, stance_frac=0.75, lip_exact=False, q_py=None,
-         td_mode="cont", gate_ff=True, gate_sy=True, swing_h=0.05, jdot=False, side_w=None, follow=True,
+         td_mode="cont", gate_ff=True, gate_sy=True, swing_h=0.05, jdot=False, side_w=None, follow=True, realtime=True,
          td_scale=1.0, td_dx=0.0, cop_margin=1.0, du_f=0.0, du_m=0.0, wz_pelvis=0.0,
          wx_pelvis=0.0, wy_pelvis=0.0):
     import mujoco.viewer
@@ -700,8 +707,11 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
     print(f"뷰어: gait MPC (vx_cmd={vx}, uppd={kp_up}, swingid={swing_id}). 창을 닫으면 종료.")
     k = 0
     t0 = 0.0
+    import time as _time
+    SYNC_EVERY = 8                              # 500 Hz / 8 ≈ 62 Hz 화면 갱신
     with mujoco.viewer.launch_passive(m, d) as v:
         hud = ViewerHUD(m, vx)
+        wall0 = _time.perf_counter()
         if follow:
             # 트래킹 카메라: 골반을 따라가되 마우스 회전·줌은 그대로 된다 (--nofollow 로 끔)
             v.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
@@ -717,8 +727,15 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
             d.ctrl[:] = ctl.torque(d, t)
             hud.update(v, d, t, k)              # sim/실제 시간·속도 표시 (Q&A 9/22 Q5)
             mujoco.mj_step(m, d)
-            v.sync()
             k += 1
+            # 화면 갱신은 ~60 Hz 면 충분하다 — 500 Hz 스텝마다 sync 하면 그리기가 계산을
+            # 잡아먹는다. 계산이 실시간보다 빠르면 기다려서 sim 시간 = 실제 시간 (Q&A 9/22 Q6).
+            if k % SYNC_EVERY == 0:
+                v.sync()
+                if realtime:
+                    ahead = k * m.opt.timestep - (_time.perf_counter() - wall0)
+                    if ahead > 0:
+                        _time.sleep(ahead)
 
 
 if __name__ == "__main__":
@@ -767,6 +784,7 @@ if __name__ == "__main__":
     wzp = float(sys.argv[sys.argv.index("--wzpel") + 1]) if "--wzpel" in sys.argv else 0.0   # ω_z 골반 비율
     wxp = float(sys.argv[sys.argv.index("--wxpel") + 1]) if "--wxpel" in sys.argv else 0.0   # ω_x (roll)
     wyp = float(sys.argv[sys.argv.index("--wypel") + 1]) if "--wypel" in sys.argv else 0.0   # ω_y (pitch)
+    rt = "--fast" not in sys.argv       # 뷰어: 실시간 맞춤 (기본). --fast 면 계산되는 만큼 빨리
     exp_tags = [t for t, on in (("sl", sl), ("lam", lam),
                                 ("capy", cpy is not None),
                                 (f"sf{sfr:g}".replace(".", "p"),
@@ -782,7 +800,7 @@ if __name__ == "__main__":
         view(vx, kp_up=kpu, swing_id=sid, wz=wzc, yaw_hold=yh,
              soft_land=sl, lam_swing=lam, wn_swing=wns, zeta_swing=zts,
              cap_y=cpy, cycle=cyc, stance_frac=sfr, lip_exact=lipx, q_py=qpy,
-             td_mode=tdm, gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd, side_w=sw_, follow=fol,
+             td_mode=tdm, gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd, side_w=sw_, follow=fol, realtime=rt,
              td_scale=tds, td_dx=tdx, cop_margin=cpm, du_f=duf, du_m=dum, wz_pelvis=wzp,
              wx_pelvis=wxp, wy_pelvis=wyp)
     else:
