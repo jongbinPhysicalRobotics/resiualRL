@@ -110,8 +110,14 @@ class WrenchMPC:
     """시간지평 N 의 wrench MPC. N=1 이면 1스텝 QP (Step 2)."""
 
     def __init__(self, params: SRBParams, horizon: int = 10, dt: float = 0.02,
-                 q_diag=None, r_diag=None, psi0: float = 0.0):
+                 q_diag=None, r_diag=None, psi0: float = 0.0, du_w=None):
         self.p = params
+        # Δu 벌점 (Q&A 9/22): Σ_k (u_k − u_{k−1})ᵀ W (u_k − u_{k−1}),  u_{−1} = 직전 적용값.
+        # R 이 1e-5 라 해가 제약 꼭짓점에서 꼭짓점으로 튄다 (9/21 Q8: 반대발 이탈 순간
+        # CoP 명령 +12 → −5 cm). 지평 안 이웃 스텝 차이에도 걸리므로 이탈 예정 발의
+        # 하중을 미리 줄이는 효과(= 이탈 램프)도 있다. None 이면 기존과 동일.
+        self.du_w = None if du_w is None else np.asarray(du_w, float)
+        self.u_prev = None
         self.N = horizon
         self.dt = dt
         self.Q = np.diag(Q_DEFAULT if q_diag is None else np.asarray(q_diag, float))
@@ -258,9 +264,21 @@ class WrenchMPC:
                 blk = Ad @ blk
 
         H = 2.0 * (B_qp.T @ self.Q_bar @ B_qp + self.R_bar)
-        H = 0.5 * (H + H.T)
         g = 2.0 * B_qp.T @ self.Q_bar @ (A_qp @ x0 - X_ref.reshape(-1)) \
             - 2.0 * self.R_bar @ u_ref_traj.reshape(-1)
+        if self.du_w is not None and np.any(self.du_w > 0):
+            nU = NU * N
+            D = np.eye(nU) - np.eye(nU, k=-NU)          # 행 k: u_k − u_{k−1}
+            e = np.zeros(nU)
+            if self.u_prev is not None:
+                e[:NU] = self.u_prev                    # u_0 − u_prev
+            else:
+                D[:NU, :] = 0.0
+            Wd = np.tile(self.du_w, N)
+            DW = D.T * Wd                               # Dᵀ diag(W)
+            H = H + 2.0 * DW @ D
+            g = g - 2.0 * DW @ e
+        H = 0.5 * (H + H.T)
 
         # 제약: stance 발 -> 부등식,  swing 발 -> W=0 등식 6개.
         # frame 주의: 제약은 '그 발이 실제로 놓인 방향' 기준이어야 한다.
@@ -287,6 +305,7 @@ class WrenchMPC:
 
         U = self._solve_qp_eq(H, g, eq_idx, C_in, d_in)
         u0 = U[:NU]
+        self.u_prev = u0.copy()
         info = {
             "solve_ms": (time.perf_counter() - t0) * 1e3,
             "violation": float((C_in @ U - d_in).max()),

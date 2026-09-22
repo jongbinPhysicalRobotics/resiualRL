@@ -131,6 +131,8 @@
 | `13_sidew_ab.py` | 보폭 A/B — 실측 v·착지 보폭·롤 CoP(실측/명령). 9/21 Q7 |
 | **`14_toe_lift.py`** | **착지 후 발 앞 들림.** 발가락/뒤꿈치 Fz 분리·발 pitch·명령 CoP x. 9/21 Q8 |
 | **`16_td_ab.py`** | **착지 거리 A/B** (`td_scale`·`td_dx`) + stance/swing 토크 초과. 9/21 Q11 |
+| `17_knee_geometry.py` | 무릎 기하 — 무릎 간격·방향·hip_roll/yaw, MPC 와 배포 RL 비교. 9/22 Q1 |
+| **`18_gait_quality.py`** | **걸음 품질 한 표** — 추종 + 발 튐 + 무릎 + yaw + 토크. **채택 판정은 이 표로.** 9/22 Q1 |
 | `15_toe_speed.py` | 속도별 발 앞 들림 + 스텝 단위 속도 손실 (병렬 실행). 9/21 Q9 |
 
 **추천 3개**: `03` → `05` → `10`. 컨트롤러의 세 축(사상·부호·제약)이 잡힌다.
@@ -144,6 +146,7 @@
 .venv/Scripts/python.exe MPC/src/14_toe_lift.py --vx 0.5
 .venv/Scripts/python.exe MPC/src/15_toe_speed.py --vx 0.3 0.5 0.6 0.7 --seconds 120
 .venv/Scripts/python.exe MPC/src/16_td_ab.py --vx 0.6 0.7 --var 1:0 1.25:0 --seconds 120
+.venv/Scripts/python.exe MPC/src/18_gait_quality.py --vx 0.5 0.7 --var "tds=1.25,copm=0.9,wzp=1" --seconds 120
 ```
 
 ---
@@ -153,7 +156,7 @@
 ```bash
 .venv/Scripts/python.exe MPC/src/09_walk.py --view --vx 0.5 \
     --uppd 300 --swingid --softland --lamswing --wn 30 --zeta 0.7 \
-    --sf 0.57 --qpy 300 --swingyaw --sidew 13 --tdscale 1.25
+    --sf 0.57 --qpy 300 --swingyaw --sidew 13 --tdscale 1.25 --copm 0.9 --wzpel 1
 ```
 
 플래그가 많은데 **전부 실험으로 얻은 것**이고 각각 근거가 있다:
@@ -169,6 +172,8 @@
 | `--swingyaw` | 스윙 발 yaw 정렬 상시 | [9/16 Q2](../Q&A/2026-09-16.md) |
 | **`--sidew 13`** | **공칭 보폭 13 cm** (기하 기본 23.7) | **[9/21 Q7](../Q&A/2026-09-21.md)** — 0.6 추종 82→91 %, 0.7 40→67 % |
 | **`--tdscale 1.25`** | **착지 전진 중립항 1.25 배** (발을 더 앞에) | **[9/21 Q11](../Q&A/2026-09-21.md)** — 120 s, 0.6 추종 92→103 %, 0.7 67→98 % |
+| **`--copm 0.9`** | **CoP 여유** — 발 사각형을 발 중앙 기준 0.9 배로 | **[9/22 Q1](../Q&A/2026-09-22.md)** — 발가락 들림 87→0 mm, 발 yaw 미끄럼 27→4° (0.7) |
+| **`--wzpel 1`** | **ω_z 를 골반 yaw 각속도로** (roll·pitch 는 전신 그대로) | **[9/22 Q1](../Q&A/2026-09-22.md)** — 골반 yaw 16→6°, 디딤 무릎 방향 37→4° (0.7). 대가: 0.7 추종 98→90 % |
 
 > ⚠ **기본값은 아직 옛날 값**이다 (`soft_land=False` 등). 플래그 없이 돌리면
 > 9/14 이전 컨트롤러가 나온다 — 비교 실험용으로 일부러 남겨둔 것.
