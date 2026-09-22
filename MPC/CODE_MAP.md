@@ -208,8 +208,10 @@
 | ~~1~~ ✅ | ~~보폭~~ → **`--sidew 13` 채택 (9/21 Q7)** | [09_walk.py](src/09_walk.py) `side_width()` / `side_offset_at()` |
 | **2** | **`Fz,min` 램프** | [mpc_qp.py L54](src/mpc_qp.py#L54) `−Fz ≤ −fz_min` 행 + `SRBParams.fz_min` |
 | 3 | `sf(v)` 속도 함수 | [gait.py L22](src/gait.py#L22) `Gait.stance_frac` |
-| 4 | 스윙 토크 클램프 (9/21 Q11 재측정: 여전히 2.5×, 0.6 이상에선 스윙 발목·hip_yaw 도 초과) | [gait.py L234](src/gait.py#L234) `SwingController.wrench()` 반환 직전 |
+| ~~4~~ ✅ | ~~스윙 토크 클램프~~ → **원인은 이륙 첫 틱 스윙 시작점 버그, 수정 후 초과 0 % (9/22 Q13)** | [09_walk.py](src/09_walk.py) `torque()` 의 `liftoff_fix` |
 | 5 | `J̇q̇` 보상 | [09_walk.py L361](src/09_walk.py#L361) `swing_id` 블록 (`mj_jacDot` 사용) |
 
 
 > **뷰어 옵션 (9/22 Q6·Q7)**: 기본 = Windows 부스트 + 화면 갱신 ~29 Hz + 궤적은 갱신 때만 + 실시간 맞춤. `--noboost` · `--syncevery N` (500/N Hz) · `--drawmpc` · `--fast` (안 기다림) · `--lite` (그림자·반사 끔, 효과 불분명) · `--vsec S` (S 초 뒤 자동 종료) · `--timelog 파일` (뷰어 구간별 시간 기록).
+
+> **스윙·접촉 옵션 (9/22 Q12·Q13, 모두 기본 꺼짐 — 시험 결과 기각)**: `--quintic xy|all` (5 차 스윙), `--loramp <ms>` (이륙 전 하중 내림), `--earlytd` (조기 접촉), `--tdsink <mm>` (착지 목표 낮춤). `--oldliftoff` 는 이륙 시작점 버그 재현용 (기본은 수정본).

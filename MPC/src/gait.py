@@ -169,6 +169,11 @@ class SwingController:
     # 전도로 무너짐 — 하중 이전 지연은 v_td 가 아니라 접촉 인지(램프/조기접촉)
     # 계층의 몫으로 판명. 파라미터는 그 작업 대비로 보존.
     v_td: float = 0.0
+    # 5 차 (최소 저크) 보간 (Q&A 9/22 Q13). 3 차 smoothstep 3s²−2s³ 는 가속도가 s=0·1 에서 최대라
+    # 이륙 순간 발에 최대 가속도가 계단처럼 걸린다 (0.5 m/s 에서 수평 ~20 m/s²). 5 차
+    # 10s³−15s⁴+6s⁵ 는 양 끝 속도·가속도가 모두 0. xy / z 따로 켠다.
+    quintic_xy: bool = False
+    quintic_z: bool = False
     p_liftoff: np.ndarray = field(default_factory=lambda: np.zeros(3))
     active: bool = False
 
@@ -179,12 +184,20 @@ class SwingController:
     def stop(self):
         self.active = False
 
+    @staticmethod
+    def _prof(s, quintic):
+        """보간 곡선 (값, 1 계, 2 계 도함수). 3 차 smoothstep 또는 5 차 최소 저크."""
+        if quintic:
+            return (s ** 3 * (10.0 - 15.0 * s + 6.0 * s * s),
+                    30.0 * s * s * (1.0 - s) ** 2,
+                    60.0 * s * (1.0 - s) * (1.0 - 2.0 * s))
+        return s * s * (3.0 - 2.0 * s), 6.0 * s * (1.0 - s), 6.0 - 12.0 * s
+
     def target(self, s: float, p_land: np.ndarray, T_swing: float):
         """swing 진행도 s ∈ [0,1] 에서 (p_des, v_des)."""
         s = float(np.clip(s, 0.0, 1.0))
         p0, p1 = self.p_liftoff, p_land
-        sm = s * s * (3.0 - 2.0 * s)             # smoothstep
-        dsm = 6.0 * s * (1.0 - s)                # d(sm)/ds
+        sm, dsm, _ = self._prof(s, self.quintic_xy)   # 3 차 smoothstep (기본) 또는 5 차
         p_des = (p0 + (p1 - p0) * sm).copy()
         v_des = ((p1 - p0) * dsm / T_swing).copy()
         if self.soft_land:
@@ -195,10 +208,14 @@ class SwingController:
             T2 = 0.5 * T_swing
             if s <= 0.5:
                 u = 2.0 * s
-                smu = u * u * (3.0 - 2.0 * u)
-                dsmu = 6.0 * u * (1.0 - u)
+                smu, dsmu, _ = self._prof(u, self.quintic_z)
                 p_des[2] = z0 + (zm - z0) * smu
                 v_des[2] = (zm - z0) * dsmu / T2
+            elif self.quintic_z and self.v_td == 0.0:
+                u = 2.0 * s - 1.0
+                smu, dsmu, _ = self._prof(u, True)
+                p_des[2] = zm + (z1 - zm) * smu
+                v_des[2] = (z1 - zm) * dsmu / T2
             else:
                 u = 2.0 * s - 1.0
                 h00 = 2 * u ** 3 - 3 * u ** 2 + 1
@@ -218,7 +235,7 @@ class SwingController:
         """궤적의 해석적 가속도 (2라운드 §5 역동역학 항용).
         양극성(전반 +, 후반 −)이 자동으로 담긴다 — smoothstep 2계도함수 6−12s."""
         s = float(np.clip(s, 0.0, 1.0))
-        a = (p_land - self.p_liftoff) * (6.0 - 12.0 * s) / (T_swing * T_swing)
+        a = (p_land - self.p_liftoff) * self._prof(s, self.quintic_xy)[2] / (T_swing * T_swing)
         a = a.copy()
         if self.soft_land:
             z0, z1 = self.p_liftoff[2], p_land[2]
@@ -226,7 +243,10 @@ class SwingController:
             T2 = 0.5 * T_swing
             if s <= 0.5:
                 u = 2.0 * s
-                a[2] = (zm - z0) * (6.0 - 12.0 * u) / (T2 * T2)
+                a[2] = (zm - z0) * self._prof(u, self.quintic_z)[2] / (T2 * T2)
+            elif self.quintic_z and self.v_td == 0.0:
+                u = 2.0 * s - 1.0
+                a[2] = (z1 - zm) * self._prof(u, True)[2] / (T2 * T2)
             else:
                 u = 2.0 * s - 1.0
                 a[2] = ((12 * u - 6) * (zm - z1)

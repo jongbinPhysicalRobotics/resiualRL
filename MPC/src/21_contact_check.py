@@ -36,7 +36,7 @@ def parse(var):
     kw = dict(REC)
     for item in filter(None, var.split(",")):
         k, v = item.split("=")
-        kw[k] = float(v) if k not in ("soft_land", "swing_id", "lam_swing") else bool(float(v))
+        kw[k] = float(v) if k not in ("soft_land", "swing_id", "lam_swing", "early_td", "liftoff_fix") else bool(float(v))
     return kw
 
 

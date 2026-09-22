@@ -51,7 +51,9 @@ class WalkController:
                  lip_exact=False, q_py=None, td_mode="cont", gate_ff=True, gate_sy=True, swing_h=0.05,
                  jdot=False, side_w=None, td_scale=1.0, td_dx=0.0,
                  cop_margin=1.0, du_f=0.0, du_m=0.0, q_over=None, wz_pelvis=0.0,
-                 wx_pelvis=0.0, wy_pelvis=0.0, td_sink=0.0):
+                 wx_pelvis=0.0, wy_pelvis=0.0, td_sink=0.0, swing_prof=0,
+                 lo_ramp=0.0, early_td=False,
+                 liftoff_fix=True):
         self.m = m
         # ω_z 출처 (Q&A 9/22): 0 = 전신 각운동량 (기존), 1 = 골반 yaw 각속도. 사이는 섞기.
         # 전신 ω_z 를 0 으로 몰면 스윙 다리의 yaw 운동량을 골반이 반대로 돌아 상쇄한다
@@ -138,6 +140,25 @@ class WalkController:
         # 추종 지연만큼 늦게 닿는다 (예정 착지 순간 접촉 0 %, 평균 8~9 ms 지연, 그 사이 공중 발에
         # ~180 N 명령 — Q11). reference 는 약 1 cm 아래를 겨냥한다. MPC 의 미래 발 위치는 그대로.
         self.td_sink = float(td_sink)
+        # 이륙 전 하중 내림 [s] (Q&A 9/22 Q13): 떠날 발의 Fz 상한을 이륙 전 lo_ramp 동안 1 → 0 으로.
+        # 뒷발 이륙 순간(+60 ms)이 한 스텝에서 가장 큰 몸통 흔들림 (골반 pitch 각속도 −3.3 rad/s,
+        # 합력 72 %) — 하중이 새 발로 넘어가기 전에 떨어지기 때문이라는 가설 (Q12).
+        self.lo_ramp = float(lo_ramp)
+        # 조기 접촉 처리 (Q&A 9/22 Q13, reference ContactManager 의 early contact): 스윙 후반(s ≥ 0.5)에
+        # 발이 실제로 닿으면(발 합력 > 20 N) 예정 착지를 기다리지 않고 바로 스탠스로 — 스윙 제어기가
+        # 땅속 목표로 발을 계속 누르지 않게 (착지 목표 낮추기 단독이 실패한 이유, Q12).
+        self.early_td = bool(early_td)
+        # ★ 이륙 순간 스윙 시작점 버그 수정 (Q&A 9/22 Q13). 스윙 시작점 p_liftoff 는 update_mpc (100 Hz)
+        # 에서만 기록됐는데, torque (500 Hz) 는 스케줄이 바뀌는 틱에 바로 스윙 제어를 시작한다. 그 사이
+        # 틱(들)에서 스윙 제어기가 '한 주기 전 이륙 위치' (실제 발에서 ~40 cm) 를 목표로 발을 400 N
+        # (상한) 으로 당겼다 — 뒷발 이륙 +60 ms 의 골반 pitch 튐(−3.3 rad/s) 후보. 수정: torque 에서 스윙이
+        # 시작되는 바로 그 틱에 시작점을 기록. False 면 예전 동작 (비교용).
+        self.liftoff_fix = bool(liftoff_fix)
+        self._sw_t0 = [-1.0, -1.0]
+        self.early = [False, False]
+        self._fb = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f"{q}_ankle_roll_link")
+                    for q in ("left", "right")]
+        self._f6 = np.zeros(6)
         # gate_yaw=False 면 제약 frame(발 실측 yaw)·스윙 yaw 정렬을 직진에서도
         # 켠다. 원래 wz≠0 게이트였는데, 0.5 m/s 직진에서 stance 발이 최대 20°
         # 돌아가 있는 게 측정됐다 — 제약 frame 오차 20° 면 MPC 가 '발 안'이라
@@ -147,6 +168,9 @@ class WalkController:
         for sc in self.sw:
             sc.soft_land = soft_land
             sc.h_swing = swing_h
+            # 스윙 보간 (Q&A 9/22 Q13): 0 = 3 차 smoothstep, 1 = 수평만 5 차, 2 = 수평·높이 모두 5 차
+            sc.quintic_xy = int(swing_prof) >= 1
+            sc.quintic_z = int(swing_prof) >= 2
             if lam_swing:
                 sc.f_max = 400.0
         self.was_stance = [True, True]
@@ -268,8 +292,10 @@ class WalkController:
         for i in range(2):
             st = self.gait.in_stance(t, i)
             if self.was_stance[i] and not st:
-                self.sw[i].start(feet[i])
-            if not st:
+                if not (self.liftoff_fix and 0.0 <= t - self._sw_t0[i] < 0.02):
+                    self.sw[i].start(feet[i])
+                    self._sw_t0[i] = t
+            if not st and not self.early[i]:
                 # capture point 배치. y 만 참조에 약하게 앵커 (표류 방지)
                 # 회전 시: 공칭 오프셋을 '착지 시점' 참조 yaw 로 회전 (reference
                 # SwingFootPlanner 방식) — 발이 미리 돌아간 위치에 딛어야
@@ -313,7 +339,12 @@ class WalkController:
         # stage-0 접촉은 '지금' 기준 (중점 t+25ms 는 착지 25ms 전부터 그 발에
         # W>0 을 명령해 torque() 의 swing 처리와 어긋남 — 검증 리포트 §5-(d))
         for i in range(2):
-            contact[0, i] = self.gait.in_stance(t, i)
+            contact[0, i] = self.gait.in_stance(t, i) or self.early[i]
+            if self.early[i]:                    # 조기 접촉: 예정 착지까지 남은 지평도 '닿음' (Q13)
+                t_td = t + self.gait.time_to_touchdown(t, i)
+                for k in range(1, N):
+                    if t + (k + 0.5) * DT_MPC < t_td:
+                        contact[k, i] = True
         X_ref = np.zeros((N, mpc_srb.NX))
         foot_traj = np.zeros((N, 2, 3))
         u_ref = np.zeros((N, mpc_srb.NU))
@@ -387,12 +418,31 @@ class WalkController:
                 psi_feet.append(float(np.arctan2(Rf[1, 0], Rf[0, 0])))
         else:
             psi_feet = None
+        fz_scale = None
+        if self.lo_ramp > 0.0:                  # 이륙 전 하중 내림 (Q13)
+            fz_scale = np.ones((N, 2))
+            for k in range(N):
+                tk = t if k == 0 else t + (k + 0.5) * DT_MPC     # contact 표와 같은 시각
+                for i in range(2):
+                    if contact[k, i] and self.gait.in_stance(tk, i):
+                        ttl = (self.gait.stance_frac - self.gait.phase(tk, i)) * self.gait.T
+                        fz_scale[k, i] = float(np.clip(ttl / self.lo_ramp, 0.0, 1.0))
         u0, _, info = self.mpc.solve_gait(x0, X_ref, psi_lin,
                                           foot_traj, contact, u_ref,
-                                          psi_feet=psi_feet)
+                                          psi_feet=psi_feet, fz_scale=fz_scale)
         self.wr = u0.reshape(2, 6)
         self.last_info = info
         return x0, X_ref[0], contact[0]
+
+    def _foot_fz(self, d, i):
+        """발 i 의 실측 수직 접촉력 합 [N] (조기 접촉 판정용)."""
+        fz = 0.0
+        for c in range(d.ncon):
+            con = d.contact[c]
+            if self.m.geom_bodyid[con.geom1] == self._fb[i] or self.m.geom_bodyid[con.geom2] == self._fb[i]:
+                mujoco.mj_contactForce(self.m, d, c, self._f6)
+                fz += abs(self._f6[0])
+        return fz
 
     # -------------------------------------------------- 500 Hz: 토크
     def torque(self, d, t):
@@ -400,6 +450,20 @@ class WalkController:
         tau_c = np.zeros(m.nv)
         for i, s_name in enumerate(mpc_srb.FOOT_SITES):
             st = self.gait.in_stance(t, i)
+            if st:
+                self.early[i] = False            # 예정 스탠스가 시작되면 조기 접촉 표시 해제
+            elif self.early_td and not self.early[i] and self.gait.swing_phase(t, i) >= 0.5:
+                if self._foot_fz(d, i) > 20.0:   # 스윙 후반에 실제로 닿았다 → 바로 스탠스 (Q13)
+                    self.early[i] = True
+                    sid_e = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, s_name)
+                    p_e = d.site_xpos[sid_e].copy(); p_e[2] = self.z_ground
+                    self.p_land[i] = p_e         # 착지점을 닿은 곳으로 고정
+            st = st or self.early[i]
+            if (self.liftoff_fix and not st and self._st_prev[i]
+                    and not (0.0 <= t - self._sw_t0[i] < 0.02)):
+                sid_l = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, s_name)
+                self.sw[i].start(d.site_xpos[sid_l].copy())   # 스윙 시작 틱에 시작점 기록 (Q13)
+                self._sw_t0[i] = t
             if st:
                 sid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, s_name)
                 jacp = np.zeros((3, m.nv)); jacr = np.zeros((3, m.nv))
@@ -517,7 +581,9 @@ def headless(vx=0.0, seconds=12.0, legmass=1.0, kp_up=60.0, swing_id=False,
              lip_exact=False, q_py=None, td_mode="cont",
              gate_ff=True, gate_sy=True, swing_h=0.05, jdot=False, side_w=None,
              td_scale=1.0, td_dx=0.0, cop_margin=1.0, du_f=0.0, du_m=0.0, wz_pelvis=0.0,
-             wx_pelvis=0.0, wy_pelvis=0.0, td_sink=0.0):
+             wx_pelvis=0.0, wy_pelvis=0.0, td_sink=0.0, swing_prof=0,
+             lo_ramp=0.0, early_td=False,
+             liftoff_fix=True):
     """ctor: WalkController 서브클래스 주입 (예: 11_walk_srb_upper).
     variant: 로그 파일명 접두어 — baseline 로그와 섞이지 않게."""
     m, d = g1_model.load_torque()
@@ -541,7 +607,9 @@ def headless(vx=0.0, seconds=12.0, legmass=1.0, kp_up=60.0, swing_id=False,
                                    td_scale=td_scale, td_dx=td_dx,
                                    cop_margin=cop_margin, du_f=du_f, du_m=du_m,
                                    wz_pelvis=wz_pelvis, wx_pelvis=wx_pelvis,
-                                   wy_pelvis=wy_pelvis, td_sink=td_sink)
+                                   wy_pelvis=wy_pelvis, td_sink=td_sink,
+                                   swing_prof=swing_prof, lo_ramp=lo_ramp,
+                                   early_td=early_td, liftoff_fix=liftoff_fix)
     tag = "inplace" if abs(vx) < 1e-9 else "vx" + f"{vx:g}".replace(".", "p")
     if abs(wz) > 1e-12:
         tag += "_wz" + f"{wz:g}".replace(".", "p").replace("-", "m")
@@ -693,7 +761,9 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
          td_mode="cont", gate_ff=True, gate_sy=True, swing_h=0.05, jdot=False, side_w=None, follow=True, realtime=True, max_sim=None, timelog=None,
          sync_every=17, draw_at_sync=True, boost=True, lite=False,
          td_scale=1.0, td_dx=0.0, cop_margin=1.0, du_f=0.0, du_m=0.0, wz_pelvis=0.0,
-         wx_pelvis=0.0, wy_pelvis=0.0, td_sink=0.0):
+         wx_pelvis=0.0, wy_pelvis=0.0, td_sink=0.0, swing_prof=0,
+         lo_ramp=0.0, early_td=False,
+         liftoff_fix=True):
     import mujoco.viewer
     m, d = g1_model.load_torque()
     g1_model.set_crouch(m, d)
@@ -710,7 +780,9 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
                                    td_scale=td_scale, td_dx=td_dx,
                                    cop_margin=cop_margin, du_f=du_f, du_m=du_m,
                                    wz_pelvis=wz_pelvis, wx_pelvis=wx_pelvis,
-                                   wy_pelvis=wy_pelvis, td_sink=td_sink)
+                                   wy_pelvis=wy_pelvis, td_sink=td_sink,
+                                   swing_prof=swing_prof, lo_ramp=lo_ramp,
+                                   early_td=early_td, liftoff_fix=liftoff_fix)
     print(f"뷰어: gait MPC (vx_cmd={vx}, uppd={kp_up}, swingid={swing_id}). 창을 닫으면 종료.")
     k = 0
     t0 = 0.0
@@ -833,6 +905,12 @@ if __name__ == "__main__":
     wxp = float(sys.argv[sys.argv.index("--wxpel") + 1]) if "--wxpel" in sys.argv else 0.0   # ω_x (roll)
     wyp = float(sys.argv[sys.argv.index("--wypel") + 1]) if "--wypel" in sys.argv else 0.0   # ω_y (pitch)
     tsk = float(sys.argv[sys.argv.index("--tdsink") + 1]) / 1000.0 if "--tdsink" in sys.argv else 0.0  # [mm]
+    spf = 0                              # 스윙 보간: --quintic xy (수평만 5 차) / --quintic all (높이도)
+    lrp = float(sys.argv[sys.argv.index("--loramp") + 1]) / 1000.0 if "--loramp" in sys.argv else 0.0  # [ms]
+    etd = "--earlytd" in sys.argv       # 조기 접촉 처리 (Q13)
+    lfx = "--oldliftoff" not in sys.argv  # 이륙 시작점 버그 수정 (기본 켬, --oldliftoff 면 예전 동작)
+    if "--quintic" in sys.argv:
+        spf = 2 if sys.argv[sys.argv.index("--quintic") + 1] == "all" else 1
     rt = "--fast" not in sys.argv       # 뷰어: 실시간 맞춤 (기본). --fast 면 계산되는 만큼 빨리
     vsec = float(sys.argv[sys.argv.index("--vsec") + 1]) if "--vsec" in sys.argv else None   # 뷰어 자동 종료 [sim s]
     vlog = sys.argv[sys.argv.index("--timelog") + 1] if "--timelog" in sys.argv else None     # 뷰어 시간 기록 파일
@@ -858,7 +936,7 @@ if __name__ == "__main__":
              td_mode=tdm, gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd, side_w=sw_, follow=fol, realtime=rt, max_sim=vsec, timelog=vlog,
              sync_every=vsyn, draw_at_sync=dsyn, boost=bst, lite=lit,
              td_scale=tds, td_dx=tdx, cop_margin=cpm, du_f=duf, du_m=dum, wz_pelvis=wzp,
-             wx_pelvis=wxp, wy_pelvis=wyp, td_sink=tsk)
+             wx_pelvis=wxp, wy_pelvis=wyp, td_sink=tsk, swing_prof=spf, lo_ramp=lrp, early_td=etd, liftoff_fix=lfx)
     else:
         ok = headless(vx=vx, seconds=secs, legmass=legm,
                       kp_up=kpu, swing_id=sid, wz=wzc, yaw_hold=yh,
@@ -868,7 +946,8 @@ if __name__ == "__main__":
                       lip_exact=lipx, q_py=qpy, td_mode=tdm,
                       gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd, side_w=sw_,
                       td_scale=tds, td_dx=tdx, cop_margin=cpm, du_f=duf, du_m=dum,
-                      wz_pelvis=wzp, wx_pelvis=wxp, wy_pelvis=wyp, td_sink=tsk)
+                      wz_pelvis=wzp, wx_pelvis=wxp, wy_pelvis=wyp, td_sink=tsk,
+                      swing_prof=spf, lo_ramp=lrp, early_td=etd, liftoff_fix=lfx)
         step = "STEP 5 (제자리 스텝)" if abs(vx) < 1e-9 else f"STEP 6 (전진 {vx} m/s)"
         print()
         print(step + (" 통과 ✓" if ok else " 실패"))

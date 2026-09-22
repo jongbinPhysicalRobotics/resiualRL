@@ -42,7 +42,7 @@ def parse(var):
         elif k.startswith("q"):                   # q2=100 → Q[2] (yaw) = 100
             kw.setdefault("q_over", {})[int(k[1:])] = float(v)
         else:
-            kw[KEYS[k]] = float(v)
+            kw[KEYS.get(k, k)] = bool(float(v)) if k in ("early_td", "liftoff_fix") else float(v)   # 그 밖의 키는 인자 이름 그대로
     return kw
 
 

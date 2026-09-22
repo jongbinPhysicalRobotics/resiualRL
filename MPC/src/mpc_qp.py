@@ -226,7 +226,7 @@ class WrenchMPC:
     # ------------------------------------------------------------------
     def solve_gait(self, x0: np.ndarray, X_ref: np.ndarray, psi: float,
                    foot_pos_traj: np.ndarray, contact: np.ndarray,
-                   u_ref_traj: np.ndarray, psi_feet=None):
+                   u_ref_traj: np.ndarray, psi_feet=None, fz_scale=None):
         """보행용 풀기.
 
         X_ref        : (N,13) 스텝별 참조
@@ -306,7 +306,17 @@ class WrenchMPC:
         for b_, (k, i) in enumerate(blocks):
             base = NU * k + NU_PER_FOOT * i
             C_in[nr * b_:nr * (b_ + 1), base:base + NU_PER_FOOT] = Cf_i[i]
-        d_in = np.concatenate([df_i[i] for (_, i) in blocks])
+        # 발별·스텝별 Fz 상한 배율 (Q&A 9/22 Q13, 이륙 전 하중 내림). 배율 < 1 이면 하한은 0 으로
+        # (상한이 하한보다 작아지는 모순 방지). 배율 0 이면 그 발 wrench 전체가 0 이 된다 (마찰·CoP 행).
+        d_list = []
+        for (k, i) in blocks:
+            dd = df_i[i]
+            if fz_scale is not None and fz_scale[k, i] < 1.0:
+                dd = dd.copy()
+                dd[4] = self.p.fz_max * max(float(fz_scale[k, i]), 0.0)
+                dd[5] = 0.0
+            d_list.append(dd)
+        d_in = np.concatenate(d_list)
 
         u_r = self._solve_qp_ineq(H, g, C_in[:, free], d_in)
         U = np.zeros(nU)
