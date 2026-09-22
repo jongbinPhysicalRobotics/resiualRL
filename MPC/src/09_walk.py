@@ -51,7 +51,7 @@ class WalkController:
                  lip_exact=False, q_py=None, td_mode="cont", gate_ff=True, gate_sy=True, swing_h=0.05,
                  jdot=False, side_w=None, td_scale=1.0, td_dx=0.0,
                  cop_margin=1.0, du_f=0.0, du_m=0.0, q_over=None, wz_pelvis=0.0,
-                 wx_pelvis=0.0, wy_pelvis=0.0):
+                 wx_pelvis=0.0, wy_pelvis=0.0, td_sink=0.0):
         self.m = m
         # ω_z 출처 (Q&A 9/22): 0 = 전신 각운동량 (기존), 1 = 골반 yaw 각속도. 사이는 섞기.
         # 전신 ω_z 를 0 으로 몰면 스윙 다리의 yaw 운동량을 골반이 반대로 돌아 상쇄한다
@@ -134,6 +134,10 @@ class WalkController:
         # td_dx = 착지 기준점 x 이동 [m] (−0.035 = 발목 대신 발 중앙을 목표에 놓기, reference 방식)
         self.td_scale = td_scale
         self.td_dx = td_dx
+        # 스윙 착지 목표를 땅보다 낮게 [m] (Q&A 9/22 Q12). 목표가 딱 지면이면 속도 0 으로 다가가다
+        # 추종 지연만큼 늦게 닿는다 (예정 착지 순간 접촉 0 %, 평균 8~9 ms 지연, 그 사이 공중 발에
+        # ~180 N 명령 — Q11). reference 는 약 1 cm 아래를 겨냥한다. MPC 의 미래 발 위치는 그대로.
+        self.td_sink = float(td_sink)
         # gate_yaw=False 면 제약 frame(발 실측 yaw)·스윙 yaw 정렬을 직진에서도
         # 켠다. 원래 wz≠0 게이트였는데, 0.5 m/s 직진에서 stance 발이 최대 20°
         # 돌아가 있는 게 측정됐다 — 제약 frame 오차 20° 면 MPC 가 '발 안'이라
@@ -449,13 +453,15 @@ class WalkController:
                     # 로 오버슛하며 11 s 전도. reference 는 Λ(a−J̇q̇) 피드포워드
                     # 가 주역이라 저감쇠로 버티지만 우리 ff 는 더 거친 근사.
                     kd_axis = 2.0 * self.zeta_swing * self.wn_swing * lam
+                p_tgt = self.p_land[i]
+                if self.td_sink:
+                    p_tgt = p_tgt - np.array([0.0, 0.0, self.td_sink])
                 F, mom, jacp, jacr = self.sw[i].wrench(
-                    m, d, s_name, s, self.p_land[i], self.gait.T_swing,
+                    m, d, s_name, s, p_tgt, self.gait.T_swing,
                     yaw_des=yd, kp_axis=kp_axis, kd_axis=kd_axis)
                 tau_c += jacp.T @ F + jacr.T @ mom
                 if self.swing_id:
-                    a_ff = self.sw[i].target_acc(s, self.p_land[i],
-                                                 self.gait.T_swing)
+                    a_ff = self.sw[i].target_acc(s, p_tgt, self.gait.T_swing)
                     dofs = self.leg_dofs[i]
                     J6 = np.vstack([jacp, jacr])[:, dofs]
                     rhs = np.concatenate([a_ff, np.zeros(3)])
@@ -511,7 +517,7 @@ def headless(vx=0.0, seconds=12.0, legmass=1.0, kp_up=60.0, swing_id=False,
              lip_exact=False, q_py=None, td_mode="cont",
              gate_ff=True, gate_sy=True, swing_h=0.05, jdot=False, side_w=None,
              td_scale=1.0, td_dx=0.0, cop_margin=1.0, du_f=0.0, du_m=0.0, wz_pelvis=0.0,
-             wx_pelvis=0.0, wy_pelvis=0.0):
+             wx_pelvis=0.0, wy_pelvis=0.0, td_sink=0.0):
     """ctor: WalkController 서브클래스 주입 (예: 11_walk_srb_upper).
     variant: 로그 파일명 접두어 — baseline 로그와 섞이지 않게."""
     m, d = g1_model.load_torque()
@@ -535,7 +541,7 @@ def headless(vx=0.0, seconds=12.0, legmass=1.0, kp_up=60.0, swing_id=False,
                                    td_scale=td_scale, td_dx=td_dx,
                                    cop_margin=cop_margin, du_f=du_f, du_m=du_m,
                                    wz_pelvis=wz_pelvis, wx_pelvis=wx_pelvis,
-                                   wy_pelvis=wy_pelvis)
+                                   wy_pelvis=wy_pelvis, td_sink=td_sink)
     tag = "inplace" if abs(vx) < 1e-9 else "vx" + f"{vx:g}".replace(".", "p")
     if abs(wz) > 1e-12:
         tag += "_wz" + f"{wz:g}".replace(".", "p").replace("-", "m")
@@ -687,7 +693,7 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
          td_mode="cont", gate_ff=True, gate_sy=True, swing_h=0.05, jdot=False, side_w=None, follow=True, realtime=True, max_sim=None, timelog=None,
          sync_every=17, draw_at_sync=True, boost=True, lite=False,
          td_scale=1.0, td_dx=0.0, cop_margin=1.0, du_f=0.0, du_m=0.0, wz_pelvis=0.0,
-         wx_pelvis=0.0, wy_pelvis=0.0):
+         wx_pelvis=0.0, wy_pelvis=0.0, td_sink=0.0):
     import mujoco.viewer
     m, d = g1_model.load_torque()
     g1_model.set_crouch(m, d)
@@ -704,7 +710,7 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
                                    td_scale=td_scale, td_dx=td_dx,
                                    cop_margin=cop_margin, du_f=du_f, du_m=du_m,
                                    wz_pelvis=wz_pelvis, wx_pelvis=wx_pelvis,
-                                   wy_pelvis=wy_pelvis)
+                                   wy_pelvis=wy_pelvis, td_sink=td_sink)
     print(f"뷰어: gait MPC (vx_cmd={vx}, uppd={kp_up}, swingid={swing_id}). 창을 닫으면 종료.")
     k = 0
     t0 = 0.0
@@ -826,6 +832,7 @@ if __name__ == "__main__":
     wzp = float(sys.argv[sys.argv.index("--wzpel") + 1]) if "--wzpel" in sys.argv else 0.0   # ω_z 골반 비율
     wxp = float(sys.argv[sys.argv.index("--wxpel") + 1]) if "--wxpel" in sys.argv else 0.0   # ω_x (roll)
     wyp = float(sys.argv[sys.argv.index("--wypel") + 1]) if "--wypel" in sys.argv else 0.0   # ω_y (pitch)
+    tsk = float(sys.argv[sys.argv.index("--tdsink") + 1]) / 1000.0 if "--tdsink" in sys.argv else 0.0  # [mm]
     rt = "--fast" not in sys.argv       # 뷰어: 실시간 맞춤 (기본). --fast 면 계산되는 만큼 빨리
     vsec = float(sys.argv[sys.argv.index("--vsec") + 1]) if "--vsec" in sys.argv else None   # 뷰어 자동 종료 [sim s]
     vlog = sys.argv[sys.argv.index("--timelog") + 1] if "--timelog" in sys.argv else None     # 뷰어 시간 기록 파일
@@ -851,7 +858,7 @@ if __name__ == "__main__":
              td_mode=tdm, gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd, side_w=sw_, follow=fol, realtime=rt, max_sim=vsec, timelog=vlog,
              sync_every=vsyn, draw_at_sync=dsyn, boost=bst, lite=lit,
              td_scale=tds, td_dx=tdx, cop_margin=cpm, du_f=duf, du_m=dum, wz_pelvis=wzp,
-             wx_pelvis=wxp, wy_pelvis=wyp)
+             wx_pelvis=wxp, wy_pelvis=wyp, td_sink=tsk)
     else:
         ok = headless(vx=vx, seconds=secs, legmass=legm,
                       kp_up=kpu, swing_id=sid, wz=wzc, yaw_hold=yh,
@@ -861,7 +868,7 @@ if __name__ == "__main__":
                       lip_exact=lipx, q_py=qpy, td_mode=tdm,
                       gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd, side_w=sw_,
                       td_scale=tds, td_dx=tdx, cop_margin=cpm, du_f=duf, du_m=dum,
-                      wz_pelvis=wzp, wx_pelvis=wxp, wy_pelvis=wyp)
+                      wz_pelvis=wzp, wx_pelvis=wxp, wy_pelvis=wyp, td_sink=tsk)
         step = "STEP 5 (제자리 스텝)" if abs(vx) < 1e-9 else f"STEP 6 (전진 {vx} m/s)"
         print()
         print(step + (" 통과 ✓" if ok else " 실패"))

@@ -70,6 +70,8 @@ def run(vx, var, seconds=40.0, settle=8.0):
         d.ctrl[:] = ctl.torque(d, t); mujoco.mj_step(m, d)
         if d.qpos[2] < 0.5:
             fell = t; break
+    if len(T) < 1000:                                    # 정착 전에 넘어짐
+        return dict(vx=vx, var=var or "권장 구성", fell=fell, at_td=np.zeros(0))
     T, ST, FZ, FC, ZL = map(np.array, (T, ST, FZ, FC, ZL))
     on = FZ > 20.0
     tot = FZ.sum(axis=1) / W
@@ -120,6 +122,8 @@ def main():
         res = pool.starmap(run, jobs)
     for r in res:
         n = len(r["at_td"])
+        if n == 0:
+            print(f"\n=== vx {r['vx']}  {r['var']}  — {r['fell']:.1f} s 에 전도 (정착 전) ==="); continue
         print(f"\n=== vx {r['vx']}  {r['var']}  ({'완주' if r['fell'] is None else '전도'}, 스텝 {n}) ===")
         d_ = r["delay"][np.isfinite(r["delay"])]
         print(f"  착지 예정 순간 실제 접촉   : {100 * r['at_td'].mean():5.1f} %   (발 최저점 높이 평균 {np.mean(r['z_td']):+.1f} mm, "

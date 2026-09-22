@@ -135,6 +135,7 @@
 | **`18_gait_quality.py`** | **걸음 품질 한 표** — 추종 + 발 튐 + 무릎 + yaw + 토크. **채택 판정은 이 표로.** 9/22 Q1 |
 | `viewer_hud.py` | 뷰어 왼쪽 위 글자 (sim/real time, 배속, 속도, 추종 %), CPU 벤치, **Windows 부스트** `boost_process`. MPC·RL 뷰어 공용. 9/22 Q5~Q7 |
 | `21_contact_check.py` | 발이 스케줄대로 닿고 떨어지나 — 예정 착지 순간 접촉, 첫 접촉 지연, 공중 명령 충격량, 튐, 이륙 오차, 합력 최저. 9/22 Q11 |
+| `22_trunk_td.py` | 착지 정렬 골반 파형 (pitch·roll 각속도, 수직 가속, 합력, 접촉) — 몸통 흔들림의 착지·이륙 몫. 9/22 Q12 |
 | `20_timing_log.py` | 창 없이 120 s 시간 기록 — MPC 호출별 조립·quadprog·반복 수, 1 s 마다 배속·CPU 벤치·GC. 9/22 Q7 |
 | `19_stance_geometry.py` | 이중지지 순간 발–CoM–골반 배치, 실제 지지·스윙·이중지지 시간 (접촉 기준), MPC vs RL. 9/22 Q4 |
 | `15_toe_speed.py` | 속도별 발 앞 들림 + 스텝 단위 속도 손실 (병렬 실행). 9/21 Q9 |

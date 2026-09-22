@@ -2,7 +2,7 @@
 
 변형 문자열: "tds=1.25,copm=0.8,duf=1e-5,dum=1e-3"  (WalkController 인자 약어)
   tds = td_scale, copm = cop_margin, duf/dum = Δu 벌점 (힘/모멘트), sw = 보폭 [cm],
-  qN = Q 대각 N 번 (0 roll 1 pitch 2 yaw ... 8 wz), wzp/wxp/wyp = ω_z/ω_x/ω_y 골반 비율 (0~1)
+  qN = Q 대각 N 번 (0 roll 1 pitch 2 yaw ... 8 wz), wzp/wxp/wyp = ω_z/ω_x/ω_y 골반 비율 (0~1), sink = 착지 목표 낮춤 [mm]
 
 지표 (정착 8 s 이후):
   추종 %, 몸 pitch, roll σ
@@ -37,6 +37,8 @@ def parse(var):
         k, v = item.split("=")
         if k == "sw":
             kw["side_w"] = None if v == "geom" else float(v) / 100.0
+        elif k == "sink":                         # 착지 목표 낮춤 [mm]
+            kw["td_sink"] = float(v) / 1000.0
         elif k.startswith("q"):                   # q2=100 → Q[2] (yaw) = 100
             kw.setdefault("q_over", {})[int(k[1:])] = float(v)
         else:
