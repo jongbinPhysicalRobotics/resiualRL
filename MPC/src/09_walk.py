@@ -671,6 +671,8 @@ def _draw_swing(v, ctl, t, n_seg=24):
         sphere(ctl.sw[i].target(s_now, ctl.p_land[i], T_sw)[0], 0.012, col)
         sphere(ctl.p_land[i], 0.015, (1.0, 0.3, 0.2, 0.9))
 
+from viewer_hud import ViewerHUD      # 뷰어 글자 표시 (Q&A 9/22 Q5)
+
 
 def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
          soft_land=False, lam_swing=False, wn_swing=100.0, zeta_swing=0.5,
@@ -699,6 +701,7 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
     k = 0
     t0 = 0.0
     with mujoco.viewer.launch_passive(m, d) as v:
+        hud = ViewerHUD(m, vx)
         if follow:
             # 트래킹 카메라: 골반을 따라가되 마우스 회전·줌은 그대로 된다 (--nofollow 로 끔)
             v.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
@@ -712,6 +715,7 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
                 with v.lock():
                     _draw_swing(v, ctl, t)      # 스윙 참조궤적 오버레이 (Q&A 9/21)
             d.ctrl[:] = ctl.torque(d, t)
+            hud.update(v, d, t, k)              # sim/실제 시간·속도 표시 (Q&A 9/22 Q5)
             mujoco.mj_step(m, d)
             v.sync()
             k += 1

@@ -42,7 +42,10 @@ cnt = 0
 mujoco.mj_forward(m, d)
 _R0 = d.xmat[PEL].reshape(3, 3)
 yaw0 = np.arctan2(_R0[1, 0], _R0[0, 0])
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "MPC/src"))
+from viewer_hud import ViewerHUD      # MPC 뷰어와 같은 표시 (sim/실제 시간·속도)
 with mujoco.viewer.launch_passive(m, d) as viewer:
+    hud = ViewerHUD(m, a.vx)
     start = time.time()
     while viewer.is_running() and time.time() - start < a.seconds:
         t0 = time.time()
@@ -66,6 +69,7 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
             target = action * c["action_scale"] + dflt
             # 카메라가 로봇을 따라가게
             viewer.cam.lookat[:] = d.xpos[PEL]
+        hud.update(viewer, d, cnt * dt, cnt)
         viewer.sync()
         rest = dt - (time.time() - t0)
         if rest > 0:
