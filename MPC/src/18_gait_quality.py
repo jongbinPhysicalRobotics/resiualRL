@@ -2,7 +2,7 @@
 
 변형 문자열: "tds=1.25,copm=0.8,duf=1e-5,dum=1e-3"  (WalkController 인자 약어)
   tds = td_scale, copm = cop_margin, duf/dum = Δu 벌점 (힘/모멘트), sw = 보폭 [cm],
-  qN = Q 대각 N 번 (0 roll 1 pitch 2 yaw ... 8 wz), wzp = ω_z 골반 비율 (0~1)
+  qN = Q 대각 N 번 (0 roll 1 pitch 2 yaw ... 8 wz), wzp/wxp/wyp = ω_z/ω_x/ω_y 골반 비율 (0~1)
 
 지표 (정착 8 s 이후):
   추종 %, 몸 pitch, roll σ
@@ -27,7 +27,8 @@ import g1_model, mpc_srb
 walk = importlib.import_module("09_walk")
 kg = importlib.import_module("17_knee_geometry")
 
-KEYS = {"tds": "td_scale", "copm": "cop_margin", "duf": "du_f", "dum": "du_m", "wzp": "wz_pelvis"}
+KEYS = {"tds": "td_scale", "copm": "cop_margin", "duf": "du_f", "dum": "du_m", "wzp": "wz_pelvis",
+        "wxp": "wx_pelvis", "wyp": "wy_pelvis"}
 
 
 def parse(var):
@@ -110,7 +111,8 @@ def run(vx, var, seconds=40.0, settle=8.0):
     if len(L["t"]) < 1000:
         return out
     tt = np.array(L["t"]); v = np.array(L["v"])
-    out.update(v=v.mean(), pitch=np.degrees(np.mean(L["pit"])), roll=np.degrees(np.std(L["rol"])))
+    out.update(v=v.mean(), pitch=np.degrees(np.mean(L["pit"])), roll=np.degrees(np.std(L["rol"])),
+               pitch_sd=np.degrees(np.std(L["pit"])))
     py = np.unwrap(np.array(L["py"])); n = int(0.8 / dt)
     head = np.convolve(py, np.ones(n) / n, mode="same")
     dp = np.degrees(py - head)[n:-n]
@@ -154,14 +156,14 @@ def main():
     with Pool(min(a.procs, len(jobs))) as pool:
         res = pool.starmap(run, jobs)
     print(f"걸음 품질 A/B — {a.seconds:.0f} s, 권장 구성 (+ 보폭 13 cm 기본)\n")
-    print(f"{'vx':>4s} {'변형':<28s} | {'추종':>4s} {'pitch':>6s} {'rollσ':>5s} | "
+    print(f"{'vx':>4s} {'변형':<28s} | {'추종':>4s} {'pitch':>6s} {'pitchσ':>6s} {'rollσ':>5s} | "
           f"{'들림':>5s} {'발가락0':>6s} {'CoP점프':>6s} {'합력최저':>6s} | "
           f"{'무릎간격':>6s} {'디딤무릎':>6s} {'스윙모음':>6s} | {'발yaw미끄럼':>10s} {'골반yaw':>6s} | {'스윙초과':>6s}")
     for r in res:
         if r.get("v") is None:
             print(f"{r['vx']:4.1f} {r['var']:<28s} | {r['fell']:.1f} s 전도"); continue
         tag = "" if r["fell"] is None else f" ✗{r['fell']:.0f}s"
-        print(f"{r['vx']:4.1f} {r['var'] + tag:<28s} | {100*r['v']/r['vx']:3.0f}% {r['pitch']:+5.1f}° {r['roll']:4.2f}° | "
+        print(f"{r['vx']:4.1f} {r['var'] + tag:<28s} | {100*r['v']/r['vx']:3.0f}% {r['pitch']:+5.1f}° {r['pitch_sd']:5.2f}° {r['roll']:4.2f}° | "
               f"{r['lift']:4.0f}mm {r['toe0']:4.0f}ms {r['jump']:5.1f}cm {r['hole']:5.0f}% | "
               f"{r['sep_min']:5.1f}cm {r['kin95']:+5.1f}° {r['hr95']:+5.1f}° | "
               f"{r['slip']:4.1f}/{r['slip95']:4.1f}° {r['pel_yaw']:5.1f}° | {r['sw_over']:5.2f}%", flush=True)

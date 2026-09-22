@@ -43,12 +43,15 @@ class WalkController:
                  zeta_swing=0.5, cap_y=None, cycle=0.8, stance_frac=0.75,
                  lip_exact=False, q_py=None, td_mode="cont", gate_ff=True, gate_sy=True, swing_h=0.05,
                  jdot=False, side_w=None, td_scale=1.0, td_dx=0.0,
-                 cop_margin=1.0, du_f=0.0, du_m=0.0, q_over=None, wz_pelvis=0.0):
+                 cop_margin=1.0, du_f=0.0, du_m=0.0, q_over=None, wz_pelvis=0.0,
+                 wx_pelvis=0.0, wy_pelvis=0.0):
         self.m = m
         # ω_z 출처 (Q&A 9/22): 0 = 전신 각운동량 (기존), 1 = 골반 yaw 각속도. 사이는 섞기.
         # 전신 ω_z 를 0 으로 몰면 스윙 다리의 yaw 운동량을 골반이 반대로 돌아 상쇄한다
         # (골반 yaw 진동 16° vs 배포 RL 2°). yaw 축만 바꾸고 roll/pitch 는 그대로.
         self.wz_pelvis = float(wz_pelvis)
+        # roll·pitch 도 같은 방식으로 섞기 (Q&A 9/22 Q2). 몸 yaw frame 에서 축별로.
+        self.w_pel = np.array([wx_pelvis, wy_pelvis, wz_pelvis], float)
         self._pel_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "pelvis")
         self.adof = actuated_dofs(m)
         # SRB 재료 훅 — 서브클래스(11_walk_srb_upper 등)가 '무엇을 강체로 볼
@@ -184,9 +187,12 @@ class WalkController:
         """SRB 상태 x(13). 기본: Θ=pelvis, p·v=전신 CoM, ω=전신 각운동량.
         t: 게이트 시각 — 상체 SRB 가 '매달린 swing 다리' 보정에 쓴다."""
         x = mpc_srb.get_state(self.m, d, I_body=self.params.I_body)
-        if self.wz_pelvis > 0.0:
-            wz_p = (d.xmat[self._pel_id].reshape(3, 3) @ d.qvel[3:6])[2]
-            x[8] = (1.0 - self.wz_pelvis) * x[8] + self.wz_pelvis * wz_p
+        a = self.w_pel
+        if a.any():
+            w_p = d.xmat[self._pel_id].reshape(3, 3) @ d.qvel[3:6]     # 골반 ω (world)
+            Rz_ = mpc_srb.rz(x[2])
+            wb = Rz_.T @ x[6:9]; wpb = Rz_.T @ w_p                     # 몸 yaw frame
+            x[6:9] = Rz_ @ ((1.0 - a) * wb + a * wpb)
         return x
 
     def ramp(self, t):
@@ -497,7 +503,8 @@ def headless(vx=0.0, seconds=12.0, legmass=1.0, kp_up=60.0, swing_id=False,
              zeta_swing=0.5, cap_y=None, cycle=0.8, stance_frac=0.75,
              lip_exact=False, q_py=None, td_mode="cont",
              gate_ff=True, gate_sy=True, swing_h=0.05, jdot=False, side_w=None,
-             td_scale=1.0, td_dx=0.0, cop_margin=1.0, du_f=0.0, du_m=0.0, wz_pelvis=0.0):
+             td_scale=1.0, td_dx=0.0, cop_margin=1.0, du_f=0.0, du_m=0.0, wz_pelvis=0.0,
+             wx_pelvis=0.0, wy_pelvis=0.0):
     """ctor: WalkController 서브클래스 주입 (예: 11_walk_srb_upper).
     variant: 로그 파일명 접두어 — baseline 로그와 섞이지 않게."""
     m, d = g1_model.load_torque()
@@ -520,7 +527,8 @@ def headless(vx=0.0, seconds=12.0, legmass=1.0, kp_up=60.0, swing_id=False,
                                    jdot=jdot, side_w=side_w,
                                    td_scale=td_scale, td_dx=td_dx,
                                    cop_margin=cop_margin, du_f=du_f, du_m=du_m,
-                                   wz_pelvis=wz_pelvis)
+                                   wz_pelvis=wz_pelvis, wx_pelvis=wx_pelvis,
+                                   wy_pelvis=wy_pelvis)
     tag = "inplace" if abs(vx) < 1e-9 else "vx" + f"{vx:g}".replace(".", "p")
     if abs(wz) > 1e-12:
         tag += "_wz" + f"{wz:g}".replace(".", "p").replace("-", "m")
@@ -668,7 +676,8 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
          soft_land=False, lam_swing=False, wn_swing=100.0, zeta_swing=0.5,
          cap_y=None, cycle=0.8, stance_frac=0.75, lip_exact=False, q_py=None,
          td_mode="cont", gate_ff=True, gate_sy=True, swing_h=0.05, jdot=False, side_w=None, follow=True,
-         td_scale=1.0, td_dx=0.0, cop_margin=1.0, du_f=0.0, du_m=0.0, wz_pelvis=0.0):
+         td_scale=1.0, td_dx=0.0, cop_margin=1.0, du_f=0.0, du_m=0.0, wz_pelvis=0.0,
+         wx_pelvis=0.0, wy_pelvis=0.0):
     import mujoco.viewer
     m, d = g1_model.load_torque()
     g1_model.set_crouch(m, d)
@@ -684,7 +693,8 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
                                    jdot=jdot, side_w=side_w,
                                    td_scale=td_scale, td_dx=td_dx,
                                    cop_margin=cop_margin, du_f=du_f, du_m=du_m,
-                                   wz_pelvis=wz_pelvis)
+                                   wz_pelvis=wz_pelvis, wx_pelvis=wx_pelvis,
+                                   wy_pelvis=wy_pelvis)
     print(f"뷰어: gait MPC (vx_cmd={vx}, uppd={kp_up}, swingid={swing_id}). 창을 닫으면 종료.")
     k = 0
     t0 = 0.0
@@ -751,6 +761,8 @@ if __name__ == "__main__":
     duf = float(sys.argv[sys.argv.index("--duf") + 1]) if "--duf" in sys.argv else 0.0     # Δu 벌점 (힘)
     dum = float(sys.argv[sys.argv.index("--dum") + 1]) if "--dum" in sys.argv else 0.0     # Δu 벌점 (모멘트)
     wzp = float(sys.argv[sys.argv.index("--wzpel") + 1]) if "--wzpel" in sys.argv else 0.0   # ω_z 골반 비율
+    wxp = float(sys.argv[sys.argv.index("--wxpel") + 1]) if "--wxpel" in sys.argv else 0.0   # ω_x (roll)
+    wyp = float(sys.argv[sys.argv.index("--wypel") + 1]) if "--wypel" in sys.argv else 0.0   # ω_y (pitch)
     exp_tags = [t for t, on in (("sl", sl), ("lam", lam),
                                 ("capy", cpy is not None),
                                 (f"sf{sfr:g}".replace(".", "p"),
@@ -767,7 +779,8 @@ if __name__ == "__main__":
              soft_land=sl, lam_swing=lam, wn_swing=wns, zeta_swing=zts,
              cap_y=cpy, cycle=cyc, stance_frac=sfr, lip_exact=lipx, q_py=qpy,
              td_mode=tdm, gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd, side_w=sw_, follow=fol,
-             td_scale=tds, td_dx=tdx, cop_margin=cpm, du_f=duf, du_m=dum, wz_pelvis=wzp)
+             td_scale=tds, td_dx=tdx, cop_margin=cpm, du_f=duf, du_m=dum, wz_pelvis=wzp,
+             wx_pelvis=wxp, wy_pelvis=wyp)
     else:
         ok = headless(vx=vx, seconds=secs, legmass=legm,
                       kp_up=kpu, swing_id=sid, wz=wzc, yaw_hold=yh,
@@ -777,7 +790,7 @@ if __name__ == "__main__":
                       lip_exact=lipx, q_py=qpy, td_mode=tdm,
                       gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd, side_w=sw_,
                       td_scale=tds, td_dx=tdx, cop_margin=cpm, du_f=duf, du_m=dum,
-                      wz_pelvis=wzp)
+                      wz_pelvis=wzp, wx_pelvis=wxp, wy_pelvis=wyp)
         step = "STEP 5 (제자리 스텝)" if abs(vx) < 1e-9 else f"STEP 6 (전진 {vx} m/s)"
         print()
         print(step + (" 통과 ✓" if ok else " 실패"))
