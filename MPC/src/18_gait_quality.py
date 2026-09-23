@@ -41,15 +41,38 @@ def parse(var):
             kw["td_sink"] = float(v) / 1000.0
         elif k.startswith("q"):                   # q2=100 → Q[2] (yaw) = 100
             kw.setdefault("q_over", {})[int(k[1:])] = float(v)
+        elif k in ("ctl", "affmode"):            # 컨트롤러 선택 (문자열): ctl=affine|split, affmode=full|c|a|off
+            kw[k] = v
         else:
             kw[KEYS.get(k, k)] = bool(float(v)) if k in ("early_td", "liftoff_fix") else float(v)   # 그 밖의 키는 인자 이름 그대로
     return kw
 
 
+def make_ctor(kw):
+    """변형 문자열의 ctl= 키로 컨트롤러 생성자 선택 (9/23: 23_walk_affine · 24_walk_split)."""
+    import functools
+    name = kw.pop("ctl", None)
+    if name == "affine":
+        mod = importlib.import_module("23_walk_affine")
+        return functools.partial(mod.AffineWalk, aff_mode=kw.pop("affmode", "full"),
+                                 aff_anchor=bool(kw.pop("anchor", 1.0)), aff_w=bool(kw.pop("affw", 1.0)),
+                                 aff_anchor_tau=kw.pop("atau", 0.1), aff_fade=kw.pop("fade", None),
+                                 aff_scale=kw.pop("scale", 1.0), aff_demean=bool(kw.pop("demean", 1.0)))
+    if name == "split":
+        mod = importlib.import_module("24_walk_split")
+        return functools.partial(mod.SplitWalk, our_gains=bool(kw.pop("ourgains", 0.0)),
+                                 ref_q=bool(kw.pop("refq", 0.0)), use_jdot=bool(kw.pop("jd", 1.0)),
+                                 f_max=kw.pop("fmax", None),
+                                 foot_pd=None if bool(kw.pop("fpd", 1.0)) else mod.OUR_FOOT_PD)
+    kw.pop("affmode", None)
+    return walk.WalkController
+
+
 def run(vx, var, seconds=40.0, settle=8.0):
     kw = parse(var)
+    Ctor = make_ctor(kw)
     m, d = g1_model.load_torque(); g1_model.set_crouch(m, d)
-    ctl = walk.WalkController(m, d, vx_cmd=vx, kp_up=300.0, swing_id=True, soft_land=True,
+    ctl = Ctor(m, d, vx_cmd=vx, kp_up=300.0, swing_id=True, soft_land=True,
                               lam_swing=True, wn_swing=30.0, zeta_swing=0.7, stance_frac=0.57,
                               q_py=300, gate_sy=False, **kw)
     h = ctl.params.h_sole

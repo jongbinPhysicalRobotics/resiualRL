@@ -132,13 +132,17 @@
 | **`14_toe_lift.py`** | **착지 후 발 앞 들림.** 발가락/뒤꿈치 Fz 분리·발 pitch·명령 CoP x. 9/21 Q8 |
 | **`16_td_ab.py`** | **착지 거리 A/B** (`td_scale`·`td_dx`) + stance/swing 토크 초과. 9/21 Q11 |
 | `17_knee_geometry.py` | 무릎 기하 — 무릎 간격·방향·hip_roll/yaw, MPC 와 배포 RL 비교. 9/22 Q1 |
-| **`18_gait_quality.py`** | **걸음 품질 한 표** — 추종 + 발 튐 + 무릎 + yaw + 토크. **채택 판정은 이 표로.** 9/22 Q1 |
+| **`18_gait_quality.py`** | **걸음 품질 한 표** — 추종 + 발 튐 + 무릎 + yaw + 토크 + 스윙오차. **채택 판정은 이 표로.** 변형 문자열에 `ctl=affine` / `ctl=split` 로 23·24 컨트롤러 비교 (9/23). 9/22 Q1 |
 | `viewer_hud.py` | 뷰어 왼쪽 위 글자 (sim/real time, 배속, 속도, 추종 %), CPU 벤치, **Windows 부스트** `boost_process`. MPC·RL 뷰어 공용. 9/22 Q5~Q7 |
 | `21_contact_check.py` | 발이 스케줄대로 닿고 떨어지나 — 예정 착지 순간 접촉, 첫 접촉 지연, 공중 명령 충격량, 튐, 이륙 오차, 합력 최저. 9/22 Q11 |
 | `22_trunk_td.py` | 착지 정렬 골반 파형 (pitch·roll 각속도, 수직 가속, 합력, 접촉) — 몸통 흔들림의 착지·이륙 몫. 9/22 Q12 |
 | `20_timing_log.py` | 창 없이 120 s 시간 기록 — MPC 호출별 조립·quadprog·반복 수, 1 s 마다 배속·CPU 벤치·GC. 9/22 Q7 |
 | `19_stance_geometry.py` | 이중지지 순간 발–CoM–골반 배치, 실제 지지·스윙·이중지지 시간 (접촉 기준), MPC vs RL. 9/22 Q4 |
 | `15_toe_speed.py` | 속도별 발 앞 들림 + 스텝 단위 속도 손실 (병렬 실행). 9/21 Q9 |
+| **`23_walk_affine.py`** | **아핀항 MPC** — 다리 각운동량을 계획된 스윙에서 예측해 SRB 의 Θ̇ 행에 알려진 항으로. `AffineMPC`(solve_gait 복사 + `d`) · `AffineWalk`(예측기). **`--check` 로 예측 정확도부터.** 9/23 Q8·Q11 |
+| **`24_walk_split.py`** | **분리** — 회전만 상체 SRB (11 상속) + reference 스윙 OSC `Jᵀ[kp e+kd ė] + JᵀΛ_다리(a−J̇q̇)` 다리 블록만, ω_n 100 축별·kd 고정·클램프 없음, reference 발자세 PD. `--refq --refhorizon --ourgains`. 9/23 Q9·Q10·Q11 |
+| `leg_momentum.py` | 다리 각운동량 실측(상대속도 정의)·질점 예측 모델 `LegPointModel`. 23 의 재료 |
+| `walk_cli.py` | 09_walk 플래그 → `headless()/view()` 인자. 23·24 가 권장 구성을 그대로 받게 |
 
 **추천 3개**: `03` → `05` → `10`. 컨트롤러의 세 축(사상·부호·제약)이 잡힌다.
 **보폭 작업 전이라면** `12` 도 (지금 상태의 기준선이 된다).
@@ -209,7 +213,8 @@
 | **2** | **`Fz,min` 램프** | [mpc_qp.py L54](src/mpc_qp.py#L54) `−Fz ≤ −fz_min` 행 + `SRBParams.fz_min` |
 | 3 | `sf(v)` 속도 함수 | [gait.py L22](src/gait.py#L22) `Gait.stance_frac` |
 | ~~4~~ ✅ | ~~스윙 토크 클램프~~ → **원인은 이륙 첫 틱 스윙 시작점 버그, 수정 후 초과 0 % (9/22 Q13)** | [09_walk.py](src/09_walk.py) `torque()` 의 `liftoff_fix` |
-| 5 | `J̇q̇` 보상 | [09_walk.py L361](src/09_walk.py#L361) `swing_id` 블록 (`mj_jacDot` 사용) |
+| ~~5~~ ✗ | ~~`J̇q̇` 보상~~ → **이륙 버그 수정 뒤 재시험해도 기각 — 골반 반작용을 받아 줄 통로가 없다 (9/23 Q4~Q7)** | [09_walk.py](src/09_walk.py) `swing_id` 블록, `--jdot` |
+| **6** | **스윙 반작용을 MPC 에** — 두 길을 새 파일로 구현 (9/23 Q11): ① 아핀항 ② reference 식 분리 | [23_walk_affine.py](src/23_walk_affine.py) · [24_walk_split.py](src/24_walk_split.py) |
 
 
 > **뷰어 옵션 (9/22 Q6·Q7)**: 기본 = Windows 부스트 + 화면 갱신 ~29 Hz + 궤적은 갱신 때만 + 실시간 맞춤. `--noboost` · `--syncevery N` (500/N Hz) · `--drawmpc` · `--fast` (안 기다림) · `--lite` (그림자·반사 끔, 효과 불분명) · `--vsec S` (S 초 뒤 자동 종료) · `--timelog 파일` (뷰어 구간별 시간 기록).
