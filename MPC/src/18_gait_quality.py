@@ -62,12 +62,13 @@ def run(vx, var, seconds=40.0, settle=8.0):
             if m.geom_bodyid[g] == b and m.geom_type[g] == mujoco.mjtGeom.mjGEOM_SPHERE:
                 (toe if m.geom_pos[g][0] > 0 else heel)[i].add(g)
     rad = m.geom_size[next(iter(toe[0]))][0]
+    sids = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, s_) for s_ in mpc_srb.FOOT_SITES]
     leg_act = [[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{s}_{j}_joint")
                 for j in ("hip_pitch", "hip_roll", "hip_yaw", "knee", "ankle_pitch", "ankle_roll")]
                for s in ("left", "right")]
     lim = [m.actuator_ctrlrange[a, 1] for a in leg_act]
     W = mujoco.mj_getTotalmass(m) * 9.81
-    L = dict(t=[], v=[], pit=[], rol=[], py=[], sep=[], grf=[])
+    L = dict(t=[], v=[], pit=[], rol=[], py=[], sep=[], grf=[], serr=[])
     F = [dict(zt=[], ft=[], fh=[], fy=[], st=[], xc=[], kin=[], hr=[]) for _ in range(2)]
     tq_sw, tq_st = [], []
     f6 = np.zeros(6); fell = None
@@ -106,6 +107,11 @@ def run(vx, var, seconds=40.0, settle=8.0):
                 r = np.abs(tau[leg_act[i]]) / np.array(lim[i])
                 (tq_st if st else tq_sw).append(r.max())
             L["grf"].append(tot / W)
+            for i2 in range(2):                     # 스윙 발 추종오차 [cm] (Q&A 9/23 Q4)
+                if not ctl.gait.in_stance(t, i2):
+                    p_des = ctl.sw[i2].target(ctl.gait.swing_phase(t, i2), ctl.p_land[i2],
+                                              ctl.gait.T_swing)[0]
+                    L["serr"].append(100 * np.linalg.norm(p_des - d.site_xpos[sids[i2]]))
         d.ctrl[:] = tau; mujoco.mj_step(m, d)
         if d.qpos[2] < 0.5:
             fell = t; break
@@ -114,7 +120,8 @@ def run(vx, var, seconds=40.0, settle=8.0):
         return out
     tt = np.array(L["t"]); v = np.array(L["v"])
     out.update(v=v.mean(), pitch=np.degrees(np.mean(L["pit"])), roll=np.degrees(np.std(L["rol"])),
-               pitch_sd=np.degrees(np.std(L["pit"])))
+               pitch_sd=np.degrees(np.std(L["pit"])),
+               serr=float(np.mean(L["serr"])) if L["serr"] else float("nan"))
     py = np.unwrap(np.array(L["py"])); n = int(0.8 / dt)
     head = np.convolve(py, np.ones(n) / n, mode="same")
     dp = np.degrees(py - head)[n:-n]
@@ -159,14 +166,14 @@ def main():
         res = pool.starmap(run, jobs)
     print(f"걸음 품질 A/B — {a.seconds:.0f} s, 권장 구성 (+ 보폭 13 cm 기본)\n")
     print(f"{'vx':>4s} {'변형':<28s} | {'추종':>4s} {'pitch':>6s} {'pitchσ':>6s} {'rollσ':>5s} | "
-          f"{'들림':>5s} {'발가락0':>6s} {'CoP점프':>6s} {'합력최저':>6s} | "
+          f"{'스윙오차':>6s} {'들림':>5s} {'발가락0':>6s} {'CoP점프':>6s} {'합력최저':>6s} | "
           f"{'무릎간격':>6s} {'디딤무릎':>6s} {'스윙모음':>6s} | {'발yaw미끄럼':>10s} {'골반yaw':>6s} | {'스윙초과':>6s}")
     for r in res:
         if r.get("v") is None:
             print(f"{r['vx']:4.1f} {r['var']:<28s} | {r['fell']:.1f} s 전도"); continue
         tag = "" if r["fell"] is None else f" ✗{r['fell']:.0f}s"
         print(f"{r['vx']:4.1f} {r['var'] + tag:<28s} | {100*r['v']/r['vx']:3.0f}% {r['pitch']:+5.1f}° {r['pitch_sd']:5.2f}° {r['roll']:4.2f}° | "
-              f"{r['lift']:4.0f}mm {r['toe0']:4.0f}ms {r['jump']:5.1f}cm {r['hole']:5.0f}% | "
+              f"{r['serr']:5.2f}cm {r['lift']:4.0f}mm {r['toe0']:4.0f}ms {r['jump']:5.1f}cm {r['hole']:5.0f}% | "
               f"{r['sep_min']:5.1f}cm {r['kin95']:+5.1f}° {r['hr95']:+5.1f}° | "
               f"{r['slip']:4.1f}/{r['slip95']:4.1f}° {r['pel_yaw']:5.1f}° | {r['sw_over']:5.2f}%", flush=True)
 
