@@ -6,7 +6,7 @@
 | 폴더 | 무엇 | 주 실행 파일 | 상태 |
 |---|---|---|---|
 | [baseline/](baseline/) | 기존 컨트롤러 + 지금까지의 모든 검증·분석 스크립트 (01 ~ 22, 25) | `09_walk.py` | 현재 권장 구성 |
-| [affine/](affine/) | **아핀항 MPC** — 다리 각운동량을 MPC 에 알려 줌 (Q&A 9/23 Q11, 9/24 Q1·Q30·Q32). 현재 방향: 세 축 모두 전신 ω + `--refshape` | `23_walk_affine.py` | 채택 후보 (렌더 확인 대기) |
+| [affine/](affine/) | **아핀항 MPC** — 다리 각운동량을 MPC 에 알려 줌 (Q&A 9/23 Q11, 9/24 Q1·Q30·Q32). 현재 방향: 세 축 모두 전신 ω + `--refshape`. 회전 명령엔 `--swayrot --turnfix` (Q34) | `23_walk_affine.py` | 채택 후보 (렌더 확인 대기) |
 | [split/](split/) | MPC·스윙 분리 — reference 식 스윙 + 상체 SRB (Q&A 9/23 Q11, 9/24 Q2) | `24_walk_split.py` | 보류 |
 
 ```bash

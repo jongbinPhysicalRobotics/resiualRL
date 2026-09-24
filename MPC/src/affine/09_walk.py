@@ -53,7 +53,7 @@ class WalkController:
                  cop_margin=1.0, du_f=0.0, du_m=0.0, q_over=None, wz_pelvis=0.0,
                  wx_pelvis=0.0, wy_pelvis=0.0, td_sink=0.0, swing_prof=0,
                  lo_ramp=0.0, early_td=False,
-                 liftoff_fix=True):
+                 liftoff_fix=True, sway_rot=False):
         self.m = m
         # ω_z 출처 (Q&A 9/22): 0 = 전신 각운동량 (기존), 1 = 골반 yaw 각속도. 사이는 섞기.
         # 전신 ω_z 를 0 으로 몰면 스윙 다리의 yaw 운동량을 골반이 반대로 돌아 상쇄한다
@@ -154,6 +154,10 @@ class WalkController:
         # (상한) 으로 당겼다 — 뒷발 이륙 +60 ms 의 골반 pitch 튐(−3.3 rad/s) 후보. 수정: torque 에서 스윙이
         # 시작되는 바로 그 틱에 시작점을 기록. False 면 예전 동작 (비교용).
         self.liftoff_fix = bool(liftoff_fix)
+        # 회전 중 sway (Q&A 9/24 Q34): 체중이동 참조를 월드 y 가 아니라 '참조 yaw 의 몸 옆 방향' 으로.
+        # 월드 y 로만 하면 90° 돈 뒤엔 앞뒤로 흔들고 옆으로는 안 옮긴다 — 한발 지지가 긴 stance 0.57 에서
+        # 제자리 회전이 6 ~ 8 s 에 전도 (0.75 는 양발 지지 50 % 라 버텼다). 회전 명령이 없으면 기존과 동일.
+        self.sway_rot = bool(sway_rot)
         self._sw_t0 = [-1.0, -1.0]
         self.early = [False, False]
         self._fb = [mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f"{q}_ankle_roll_link")
@@ -364,6 +368,8 @@ class WalkController:
         # 지평에 걸쳐 적분 (reference 의 arc reference). 직진/제자리는 기존 유지.
         combo = abs(self.wz_cmd) > 1e-12 and abs(self.vx_cmd) > 1e-9
         arc = np.zeros((N, 2))
+        sway_rot = self.sway_rot and abs(self.wz_cmd) > 1e-12
+        ctr, nrm, lat = np.zeros((N, 2)), np.zeros((N, 2)), np.zeros(N)
         if combo:
             vb = np.array([self.vx_cmd * self.ramp(t), 0.0])
             p_arc = np.zeros(2)
@@ -386,15 +392,28 @@ class WalkController:
             # 중앙 = 경로 y: 직선/제자리는 y₀ 고정, 조합은 원호 위의 y.
             st = [i for i in range(2) if contact[k, i]]
             cy = (x0[4] + arc[k, 1]) if combo else self.com0[1]
-            y_sup = np.mean([foot_traj[k, i, 1] for i in st]) if st else cy
-            X_ref[k, 4] = cy + BETA_SWAY * (y_sup - cy)
+            if sway_rot:
+                # 몸 옆 방향 n_k (참조 yaw) 성분만 지지 중심 쪽으로 (Q34)
+                ctr[k] = (X_ref[k, 3], cy)
+                nrm[k] = mpc_srb.rz(X_ref[k, 2])[:2, 1]
+                s_k = np.mean([foot_traj[k, i, :2] for i in st], axis=0) if st else ctr[k]
+                lat[k] = BETA_SWAY * float(nrm[k] @ (s_k - ctr[k]))
+            else:
+                y_sup = np.mean([foot_traj[k, i, 1] for i in st]) if st else cy
+                X_ref[k, 4] = cy + BETA_SWAY * (y_sup - cy)
             X_ref[k, 5] = self.com0[2]
         # sway 참조를 속도 제한 램프로 스무딩 (스텝 함수 그대로면 전환 순간
         # 참조 점프를 MPC 가 쫓아 옆으로 차버린다 — Step5 디버깅 5차)
-        y_prev = x0[4]
-        for k in range(N):
-            dy = np.clip(X_ref[k, 4] - y_prev, -0.4 * DT_MPC, 0.4 * DT_MPC)
-            X_ref[k, 4] = y_prev = y_prev + dy
+        if sway_rot:
+            l_prev = float(nrm[0] @ (x0[3:5] - ctr[0]))
+            for k in range(N):
+                l_prev += np.clip(lat[k] - l_prev, -0.4 * DT_MPC, 0.4 * DT_MPC)
+                X_ref[k, 3:5] = ctr[k] + l_prev * nrm[k]
+        else:
+            y_prev = x0[4]
+            for k in range(N):
+                dy = np.clip(X_ref[k, 4] - y_prev, -0.4 * DT_MPC, 0.4 * DT_MPC)
+                X_ref[k, 4] = y_prev = y_prev + dy
         for k in range(N):
             if combo:   # 속도 참조도 지평 내 heading 을 따라 회전
                 Rk = mpc_srb.rz(self.yaw_ref(t + (k + 1) * DT_MPC))[:2, :2]
@@ -585,7 +604,7 @@ def headless(vx=0.0, seconds=12.0, legmass=1.0, kp_up=60.0, swing_id=False,
              td_scale=1.0, td_dx=0.0, cop_margin=1.0, du_f=0.0, du_m=0.0, wz_pelvis=0.0,
              wx_pelvis=0.0, wy_pelvis=0.0, td_sink=0.0, swing_prof=0,
              lo_ramp=0.0, early_td=False,
-             liftoff_fix=True):
+             liftoff_fix=True, sway_rot=False):
     """ctor: WalkController 서브클래스 주입 (예: 11_walk_srb_upper).
     variant: 로그 파일명 접두어 — baseline 로그와 섞이지 않게."""
     m, d = g1_model.load_torque()
@@ -611,7 +630,7 @@ def headless(vx=0.0, seconds=12.0, legmass=1.0, kp_up=60.0, swing_id=False,
                                    wz_pelvis=wz_pelvis, wx_pelvis=wx_pelvis,
                                    wy_pelvis=wy_pelvis, td_sink=td_sink,
                                    swing_prof=swing_prof, lo_ramp=lo_ramp,
-                                   early_td=early_td, liftoff_fix=liftoff_fix)
+                                   early_td=early_td, liftoff_fix=liftoff_fix, sway_rot=sway_rot)
     tag = "inplace" if abs(vx) < 1e-9 else "vx" + f"{vx:g}".replace(".", "p")
     if abs(wz) > 1e-12:
         tag += "_wz" + f"{wz:g}".replace(".", "p").replace("-", "m")
@@ -765,7 +784,7 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
          td_scale=1.0, td_dx=0.0, cop_margin=1.0, du_f=0.0, du_m=0.0, wz_pelvis=0.0,
          wx_pelvis=0.0, wy_pelvis=0.0, td_sink=0.0, swing_prof=0,
          lo_ramp=0.0, early_td=False,
-         liftoff_fix=True):
+         liftoff_fix=True, sway_rot=False):
     import mujoco.viewer
     m, d = g1_model.load_torque()
     g1_model.set_crouch(m, d)
@@ -784,7 +803,7 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
                                    wz_pelvis=wz_pelvis, wx_pelvis=wx_pelvis,
                                    wy_pelvis=wy_pelvis, td_sink=td_sink,
                                    swing_prof=swing_prof, lo_ramp=lo_ramp,
-                                   early_td=early_td, liftoff_fix=liftoff_fix)
+                                   early_td=early_td, liftoff_fix=liftoff_fix, sway_rot=sway_rot)
     print(f"뷰어: gait MPC (vx_cmd={vx}, uppd={kp_up}, swingid={swing_id}). 창을 닫으면 종료.")
     k = 0
     t0 = 0.0
@@ -911,6 +930,7 @@ if __name__ == "__main__":
     lrp = float(sys.argv[sys.argv.index("--loramp") + 1]) / 1000.0 if "--loramp" in sys.argv else 0.0  # [ms]
     etd = "--earlytd" in sys.argv       # 조기 접촉 처리 (Q13)
     lfx = "--oldliftoff" not in sys.argv  # 이륙 시작점 버그 수정 (기본 켬, --oldliftoff 면 예전 동작)
+    swr = "--swayrot" in sys.argv       # 회전 중 sway 를 몸 옆 방향으로 (Q&A 9/24 Q34)
     if "--quintic" in sys.argv:
         spf = 2 if sys.argv[sys.argv.index("--quintic") + 1] == "all" else 1
     rt = "--fast" not in sys.argv       # 뷰어: 실시간 맞춤 (기본). --fast 면 계산되는 만큼 빨리
@@ -944,7 +964,7 @@ if __name__ == "__main__":
              td_mode=tdm, gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd, side_w=sw_, follow=fol, realtime=rt, max_sim=vsec, timelog=vlog,
              sync_every=vsyn, draw_at_sync=dsyn, boost=bst, lite=lit,
              td_scale=tds, td_dx=tdx, cop_margin=cpm, du_f=duf, du_m=dum, wz_pelvis=wzp,
-             wx_pelvis=wxp, wy_pelvis=wyp, td_sink=tsk, swing_prof=spf, lo_ramp=lrp, early_td=etd, liftoff_fix=lfx)
+             wx_pelvis=wxp, wy_pelvis=wyp, td_sink=tsk, swing_prof=spf, lo_ramp=lrp, early_td=etd, liftoff_fix=lfx, sway_rot=swr)
     else:
         ok = headless(vx=vx, seconds=secs, legmass=legm,
                       kp_up=kpu, swing_id=sid, wz=wzc, yaw_hold=yh,
@@ -955,7 +975,7 @@ if __name__ == "__main__":
                       gate_ff=gff, gate_sy=gsy, swing_h=swh, jdot=jd, side_w=sw_,
                       td_scale=tds, td_dx=tdx, cop_margin=cpm, du_f=duf, du_m=dum,
                       wz_pelvis=wzp, wx_pelvis=wxp, wy_pelvis=wyp, td_sink=tsk,
-                      swing_prof=spf, lo_ramp=lrp, early_td=etd, liftoff_fix=lfx)
+                      swing_prof=spf, lo_ramp=lrp, early_td=etd, liftoff_fix=lfx, sway_rot=swr)
         step = ("서 있기 (보행 스케줄 끔)" if nogait else
                 "STEP 5 (제자리 스텝)" if abs(vx) < 1e-9 else f"STEP 6 (전진 {vx} m/s)")
         print()

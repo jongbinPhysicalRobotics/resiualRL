@@ -59,6 +59,7 @@ def parse(argv=None) -> dict:
         lo_ramp=_get(argv, "--loramp", 0.0) / 1000.0,
         early_td="--earlytd" in argv,
         liftoff_fix="--oldliftoff" not in argv,
+        sway_rot="--swayrot" in argv,
     )
     view_kw = dict(
         follow="--nofollow" not in argv,
