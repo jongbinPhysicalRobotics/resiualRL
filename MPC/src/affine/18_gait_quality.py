@@ -70,7 +70,8 @@ def make_ctor(kw):
                                  aff_anchor_tau=kw.pop("atau", 0.1), aff_fade=kw.pop("fade", None),
                                  aff_scale=kw.pop("scale", 1.0), aff_demean=bool(kw.pop("demean", 1.0)),
                                  aff_orbit=bool(kw.pop("orbit", 0.0)),
-                                 aff_refshape=bool(kw.pop("refshape", 0.0)))
+                                 aff_refshape=bool(kw.pop("refshape", 0.0)),
+                                 aff_upperI=bool(kw.pop("upperI", 0.0)))
     if name == "split":
         mod = _need("24_walk_split", "split")
         if bool(kw.pop("refh", 0.0)):                # reference 지평 N=25, dt=0.02 (프로세스별 전역)

@@ -16,6 +16,9 @@
     (c) 지평 k 스텝 앞 예측 vs 그 시각 실측     (preview 로 쓸 만한가)
   예측이 틀리면 아핀항은 외란을 **더할** 뿐이다 — 이 표를 보고 켠다.
 
+★ 현재 방향 (Q&A 9/24 Q30·Q32): 세 축 모두 전신 ω (--wzpel 0 --wxpel 0) + affine + --refshape.
+  B 안 (전부 골반 ω, --upperI) 은 기각 — affine 없이도 앞으로 16~21°, 켜면 +30°·0.7 전도.
+
 사용 (09_walk 와 같은 플래그 + 아래):
   .venv/Scripts/python.exe MPC/src/affine/23_walk_affine.py --check --vx 0.5 --seconds 20 [권장 플래그]
   .venv/Scripts/python.exe MPC/src/affine/23_walk_affine.py --vx 0.5 --seconds 40 [권장 플래그]
@@ -27,6 +30,9 @@
                        정확한 식: ω_골반 = I_상체⁻¹ (L − L_다리 − 궤도항). 없으면 roll 을 1.8 배 과대 예측한다
                        120 s 결과 (Q21): 섞기 유지 (wxp 0.5) 에선 pitch σ −13~19 % 더 줄지만 약간 뒤로 기움 (−1~−3°).
                        roll 섞기를 빼면 (wxp 0) roll σ 가 2~2.4 배 — 계획 예측의 roll 이 부정확해서 (상관 0.06~0.22)
+  --upperI             MPC 관성을 상체 관성으로 (Q&A 9/24 Q32). 세 축 모두 골반 ω (--wxpel 1 --wypel 1 --wzpel 1) 와 같이 쓴다:
+                       자세 식 Θ̇ = Rᵀω 가 정확해지고, affine 은 각속도 식에 −I_상체⁻¹ L̇_다리 로 들어간다
+                       (L = I_상체 ω_골반 + L_다리 ⇒ I_상체 ω̇_골반 = Σ(r×F + m) − L̇_다리). 기본 꺼짐.
   --refshape           ω 참조를 "골반이 멈춰 있는 값" ω_ref,k = I_전신⁻¹ L_다리,k 로 (Q&A 9/24 Q30). 기본 꺼짐.
                        전신 ω 축 (α < 1) 에만 적용. 참조만 바꾸므로 볼록성 유지.
                        이유: 모델만 고치면 목표가 여전히 '전신 평균 ω = 0' 이라 MPC 가 골반을 다리 반대로 돌린다
@@ -212,13 +218,16 @@ class AffineWalk(walk.WalkController):
 
     def __init__(self, m, d, aff_mode="full", aff_anchor=True, aff_w=True,
                  aff_anchor_tau=0.1, aff_fade=None, aff_scale=1.0, aff_demean=True, aff_orbit=False,
-                 aff_refshape=False, **kw):
+                 aff_refshape=False, aff_upperI=False, **kw):
         super().__init__(m, d, **kw)
         self.aff_scale = float(aff_scale)               # 예측 L 배율 (--check: 계획 예측 RMS 가 실측의 1.4~1.6 배)
         self.aff_demean = bool(aff_demean)              # 지평 평균 제거
         self.aff_anchor_tau = float(aff_anchor_tau)     # 앵커 감쇠 시정수 [s]
         self.aff_fade = None if aff_fade is None else float(aff_fade)   # 이 시각부터 0.2 s 에 걸쳐 아핀항 페이드 [s]
         I_ub, m_ub, _ = lm.upper_body_inertia(m, d)
+        if aff_upperI:
+            # 골반 ω 상태와 짝: 입력 행렬 B·아핀항 c 의 관성을 상체로 (Q32). 병진 질량은 전신 그대로.
+            self.params.I_body = I_ub.copy()
         self.m_ub = float(m_ub)
         self.aff_orbit = bool(aff_orbit)                # 상체 궤도항 (Q20)
         self.I_ub = I_ub
@@ -429,6 +438,7 @@ if __name__ == "__main__":
     admn = "--nodemean" not in sys.argv          # 지평 평균 제거 (기본 켬 — 3 차 A/B 에서 앞기울기 제거)
     orb = "--orbit" in sys.argv                   # 상체 궤도항 (Q20)
     rsh = "--refshape" in sys.argv                # ω 참조 = 골반 정지 값 (Q30)
+    uI = "--upperI" in sys.argv                   # MPC 관성 = 상체 (Q32)
     if A["decim"]:
         walk.DECIM = A["decim"]
         print(f"  [실험] MPC 재풀이 {500 / walk.DECIM:.0f} Hz (DECIM={walk.DECIM})")
@@ -437,7 +447,7 @@ if __name__ == "__main__":
         sys.exit(0)
     ctor = functools.partial(AffineWalk, aff_mode=mode, aff_anchor=anchor, aff_w=affw,
                              aff_anchor_tau=atau, aff_fade=fade, aff_scale=ascl, aff_demean=admn, aff_orbit=orb,
-                             aff_refshape=rsh)
+                             aff_refshape=rsh, aff_upperI=uI)
     if A["view"]:
         walk.view(A["vx"], ctor=ctor, **A["common"], **A["view_kw"])
     else:
