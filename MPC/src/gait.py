@@ -18,6 +18,17 @@ from mpc_srb import FOOT_SITES, rz
 # ---------------------------------------------------------------------------
 # 접촉 스케줄
 # ---------------------------------------------------------------------------
+# ★ 보행 스케줄 켜기/끄기 (Q&A 9/24 Q8)
+#   1 = 켬 (기본): 스케줄대로 발을 번갈아 든다 — --vx 0 이면 제자리 스텝, --vx 0.5 면 전진
+#   0 = 끔       : 양발이 항상 stance — 가만히 서 있기. --vx 0 과 같이 쓴다
+#                  (vx ≠ 0 이면 발은 붙어 있는데 참조만 앞으로 가서 몸이 기운다)
+#   끄면 phase() 가 늘 0 을 돌려준다 = 시작 전(t < t_start) 상태가 끝없이 이어진다.
+#   in_stance / swing_phase / contact_table / time_to_touchdown 이 모두 phase() 를 거치므로
+#   MPC 접촉표·스윙 제어·착지점 계획이 전부 "양발 디딤" 으로 따라온다.
+#   이 값을 바꾸거나, 09_walk / 23_walk_affine / 24_walk_split 에 --nogait 를 주면 그 실행만 0 이 된다.
+GAIT_ON = 1
+
+
 @dataclass
 class Gait:
     """고정 타이밍 보행 스케줄. 발 i 의 위상 φ_i = ((t−t_start)/T + offset_i) mod 1,
@@ -29,7 +40,7 @@ class Gait:
     t_start: float = 0.5           # 이 시각 전에는 둘 다 stance (서 있기)
 
     def phase(self, t: float, i: int) -> float:
-        if t < self.t_start:
+        if not GAIT_ON or t < self.t_start:      # 스케줄 끔 = 영원히 시작 전 (양발 stance)
             return 0.0
         return ((t - self.t_start) / self.T + self.offsets[i]) % 1.0
 

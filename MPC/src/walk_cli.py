@@ -14,6 +14,10 @@ def _get(argv, key, default, cast=float):
 
 def parse(argv=None) -> dict:
     argv = sys.argv if argv is None else argv
+    if "--nogait" in argv:                       # 보행 스케줄 끔 = 가만히 서 있기 (gait.GAIT_ON, Q&A 9/24 Q8)
+        import gait
+        gait.GAIT_ON = 0
+        print("  [서 있기] 보행 스케줄 끔 — 양발 항상 stance")
     sw_ = None
     if "--sidew" in argv:
         a = argv[argv.index("--sidew") + 1]

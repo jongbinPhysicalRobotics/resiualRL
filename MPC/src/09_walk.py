@@ -925,6 +925,12 @@ if __name__ == "__main__":
                                 (f"sf{sfr:g}".replace(".", "p"),
                                  abs(sfr - 0.75) > 1e-9 or abs(cyc - 0.8) > 1e-9)) if on]
     exp_variant = "-".join(exp_tags)
+    nogait = "--nogait" in sys.argv        # 보행 스케줄 끔 = 가만히 서 있기 (gait.GAIT_ON 참고, Q&A 9/24 Q8)
+    if nogait:
+        import gait as _gait
+        _gait.GAIT_ON = 0
+        print("  [서 있기] 보행 스케줄 끔 — 양발 항상 stance"
+              + ("" if abs(vx) < 1e-9 else f"   ⚠ --vx {vx} 인데 발을 떼지 않는다 (몸만 기운다)"))
     if "--decim" in sys.argv:
         # MPC 재풀이 주기 실험용 (500/DECIM Hz). 지평(DT_MPC, HORIZON)은 그대로 —
         # '재풀이를 얼마나 자주 하느냐'만 분리해서 보기 위함. residual RL 병렬화
@@ -950,6 +956,7 @@ if __name__ == "__main__":
                       td_scale=tds, td_dx=tdx, cop_margin=cpm, du_f=duf, du_m=dum,
                       wz_pelvis=wzp, wx_pelvis=wxp, wy_pelvis=wyp, td_sink=tsk,
                       swing_prof=spf, lo_ramp=lrp, early_td=etd, liftoff_fix=lfx)
-        step = "STEP 5 (제자리 스텝)" if abs(vx) < 1e-9 else f"STEP 6 (전진 {vx} m/s)"
+        step = ("서 있기 (보행 스케줄 끔)" if nogait else
+                "STEP 5 (제자리 스텝)" if abs(vx) < 1e-9 else f"STEP 6 (전진 {vx} m/s)")
         print()
         print(step + (" 통과 ✓" if ok else " 실패"))
