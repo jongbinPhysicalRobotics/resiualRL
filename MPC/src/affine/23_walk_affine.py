@@ -27,6 +27,10 @@
                        정확한 식: ω_골반 = I_상체⁻¹ (L − L_다리 − 궤도항). 없으면 roll 을 1.8 배 과대 예측한다
                        120 s 결과 (Q21): 섞기 유지 (wxp 0.5) 에선 pitch σ −13~19 % 더 줄지만 약간 뒤로 기움 (−1~−3°).
                        roll 섞기를 빼면 (wxp 0) roll σ 가 2~2.4 배 — 계획 예측의 roll 이 부정확해서 (상관 0.06~0.22)
+  --refshape           ω 참조를 "골반이 멈춰 있는 값" ω_ref,k = I_전신⁻¹ L_다리,k 로 (Q&A 9/24 Q30). 기본 꺼짐.
+                       전신 ω 축 (α < 1) 에만 적용. 참조만 바꾸므로 볼록성 유지.
+                       이유: 모델만 고치면 목표가 여전히 '전신 평균 ω = 0' 이라 MPC 가 골반을 다리 반대로 돌린다
+                       (세 축 모두 전신 ω 로 하면 골반 yaw 16 ~ 20°, affine 을 켜도 그대로)
 
 1 차 결과 (9/23 Q11, 40 s): 예측 pitch 상관 지평 전체 0.87~0.98.  c 항이 몸을 +7~13° 앞으로 기울였는데
 (예측 L 의 DC = 모델 오차), 지평 평균 제거로 사라짐 — pitch σ 3.35→2.63 (0.5), 4.04→3.10 (0.7),
@@ -57,7 +61,7 @@ walk = importlib.import_module("09_walk")
 class AffineMPC(WrenchMPC):
     """WrenchMPC + 아핀항.  solve_gait 만 다시 쓴다 (부모 것을 복사하고 Ac 블록·c_k·d 를 넣었다)."""
 
-    def __init__(self, params, I_ub, alpha, mode="full", aff_w=True, **kw):
+    def __init__(self, params, I_ub, alpha, mode="full", aff_w=True, ref_shape=False, **kw):
         super().__init__(params, **kw)
         self.I_ub = np.asarray(I_ub, float)             # 상체 관성 (body/yaw frame, 자기 CoM 기준)
         self.alpha = np.asarray(alpha, float)           # 축별 골반 비율 (yaw frame)
@@ -70,6 +74,7 @@ class AffineMPC(WrenchMPC):
         self.L_provider = None       # (x0, X_ref, foot_traj, contact) -> (N,3) L_다리 (world, 전신 CoM 기준)
         self.last_L = None
         self.last_d = None
+        self.ref_shape = bool(ref_shape)                # ω 참조 = 골반 정지 값 (Q30)
 
     def affine_c(self, psi, L_traj):
         """이산 아핀항 c_d (N,13).  c_d,k = c dt + ½ A c dt²  (A²c = 0 이라 정확한 ZOH)."""
@@ -109,6 +114,14 @@ class AffineMPC(WrenchMPC):
             Ac[0:3, 6:9] = self.M_th @ Rz_.T          # ★ Θ–ω 블록 교체
         Ad, _ = discretize(Ac, np.zeros((NX, NU)), self.dt)
         c_d = self.affine_c(psi, L_traj)              # ★ 스텝별 아핀항
+        if self.ref_shape:
+            # ★ ω 참조를 "골반이 멈춰 있는 값" 으로: ω_골반 = I_상체⁻¹(I_전신 ω − L_다리) = 0 ⇒ ω = I_전신⁻¹ L_다리.
+            #   전신 ω 축 (1−α) 만큼만 — 골반 ω 축은 이미 골반 정지가 목표다. 몸 yaw 좌표에서 축별로.
+            X_ref = np.array(X_ref, float, copy=True)
+            one_m_a = 1.0 - self.alpha
+            for k in range(N):
+                w_add_b = one_m_a * np.linalg.solve(self.p.I_body, Rz_.T @ L_traj[k])
+                X_ref[k, 6:9] = X_ref[k, 6:9] + Rz_ @ w_add_b
 
         Bd = []
         for k in range(N):
@@ -198,7 +211,8 @@ class AffineWalk(walk.WalkController):
     """WalkController + AffineMPC + 지평 L_다리 예측.  update_mpc 는 부모 것 그대로 — 예측기는 MPC 가 부른다."""
 
     def __init__(self, m, d, aff_mode="full", aff_anchor=True, aff_w=True,
-                 aff_anchor_tau=0.1, aff_fade=None, aff_scale=1.0, aff_demean=True, aff_orbit=False, **kw):
+                 aff_anchor_tau=0.1, aff_fade=None, aff_scale=1.0, aff_demean=True, aff_orbit=False,
+                 aff_refshape=False, **kw):
         super().__init__(m, d, **kw)
         self.aff_scale = float(aff_scale)               # 예측 L 배율 (--check: 계획 예측 RMS 가 실측의 1.4~1.6 배)
         self.aff_demean = bool(aff_demean)              # 지평 평균 제거
@@ -213,6 +227,7 @@ class AffineWalk(walk.WalkController):
                              horizon=walk.HORIZON, dt=walk.DT_MPC,
                              q_diag=np.diag(self.mpc.Q), psi0=yaw0, du_w=self.mpc.du_w)
         self.mpc.L_provider = self.predict_leg_L
+        self.mpc.ref_shape = bool(aff_refshape)
         self.legpm = [lm.LegPointModel(m, d, i) for i in range(2)]
         self.aff_anchor = aff_anchor
         self._t_now, self._d_now = 0.0, d
@@ -413,6 +428,7 @@ if __name__ == "__main__":
     ascl = float(sys.argv[sys.argv.index("--affscale") + 1]) if "--affscale" in sys.argv else 1.0
     admn = "--nodemean" not in sys.argv          # 지평 평균 제거 (기본 켬 — 3 차 A/B 에서 앞기울기 제거)
     orb = "--orbit" in sys.argv                   # 상체 궤도항 (Q20)
+    rsh = "--refshape" in sys.argv                # ω 참조 = 골반 정지 값 (Q30)
     if A["decim"]:
         walk.DECIM = A["decim"]
         print(f"  [실험] MPC 재풀이 {500 / walk.DECIM:.0f} Hz (DECIM={walk.DECIM})")
@@ -420,7 +436,8 @@ if __name__ == "__main__":
         check(A["vx"], A["seconds"], A["common"], orbit=orb)
         sys.exit(0)
     ctor = functools.partial(AffineWalk, aff_mode=mode, aff_anchor=anchor, aff_w=affw,
-                             aff_anchor_tau=atau, aff_fade=fade, aff_scale=ascl, aff_demean=admn, aff_orbit=orb)
+                             aff_anchor_tau=atau, aff_fade=fade, aff_scale=ascl, aff_demean=admn, aff_orbit=orb,
+                             aff_refshape=rsh)
     if A["view"]:
         walk.view(A["vx"], ctor=ctor, **A["common"], **A["view_kw"])
     else:
