@@ -42,7 +42,7 @@ cnt = 0
 mujoco.mj_forward(m, d)
 _R0 = d.xmat[PEL].reshape(3, 3)
 yaw0 = np.arctan2(_R0[1, 0], _R0[0, 0])
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "MPC/src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "MPC/src/baseline"))
 from viewer_hud import ViewerHUD      # MPC 뷰어와 같은 표시 (sim/실제 시간·속도)
 with mujoco.viewer.launch_passive(m, d) as viewer:
     hud = ViewerHUD(m, a.vx)

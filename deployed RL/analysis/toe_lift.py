@@ -1,6 +1,6 @@
 """배포 RL 정책의 착지 직후 발가락/뒤꿈치 하중·발 pitch·발가락 높이·실현 CoP (Q&A 9/21 Q9).
 
-MPC 의 MPC/src/14_toe_lift.py 와 같은 양을 잰다. 착지 = 40 ms 이상 공중 뒤 첫 접촉.
+MPC 의 MPC/src/baseline/14_toe_lift.py 와 같은 양을 잰다. 착지 = 40 ms 이상 공중 뒤 첫 접촉.
 
 사용:
   .venv/Scripts/python.exe "deployed RL/analysis/toe_lift.py" --vx 1.0 --seconds 120

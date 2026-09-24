@@ -82,7 +82,7 @@ d(Iω)/dt = Σ (r_i × F_i + m_i)        (회전)
 전신 L·전신 I 조합은 다리 반작용을 L-공간에서 암묵 흡수하는 필터였다 —
 Θ/ω 불일치는 그 흡수의 대가. 부산물 발견: τ = bias − JᵀW 는 접촉력 = W 를
 정확히 실현하므로, 상체 모델을 쓰면 다리 무게 '전부'가 wrench 에 매달린다
-(유효 중력 g·M_tot/M_ub). 코드는 절단 장비로 보존: src/11_walk_srb_upper.py.
+(유효 중력 g·M_tot/M_ub). 코드는 절단 장비로 보존: src/baseline/11_walk_srb_upper.py.
 
 ---
 

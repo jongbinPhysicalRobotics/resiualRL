@@ -24,7 +24,7 @@ residual RL/                  ← 최상위
 
 **코드를 처음 본다면** → [MPC/CODE_MAP.md](MPC/CODE_MAP.md) (읽는 순서 안내)
 
-실행은 **최상위에서**: `.venv/Scripts/python.exe MPC/src/09_walk.py --view --vx 0.5 ...`
+실행은 **최상위에서**: `.venv/Scripts/python.exe MPC/src/baseline/09_walk.py --view --vx 0.5 ...`
 
 ---
 
@@ -66,29 +66,29 @@ MPC(시변 B, swing 발 W=0 등식 제약)로:
 - 모델: `mujoco_menagerie/unitree_g1/` (sparse clone — G1만 받음)
 
 ```bash
-.venv/Scripts/python.exe MPC/src/02_inspect.py     # 모델 구조 덤프
-.venv/Scripts/python.exe MPC/src/01_view.py crouch # 무제어 — 쓰러지는 게 정상
-.venv/Scripts/python.exe MPC/src/03_grf_to_tau.py  # F -> tau 검증 (핵심)
-.venv/Scripts/python.exe MPC/src/04_stand.py       # 30초 + 외란 테스트
-.venv/Scripts/python.exe MPC/src/04_stand.py --view --pd  # 뷰어로 서 있는 모습
+.venv/Scripts/python.exe MPC/src/baseline/02_inspect.py     # 모델 구조 덤프
+.venv/Scripts/python.exe MPC/src/baseline/01_view.py crouch # 무제어 — 쓰러지는 게 정상
+.venv/Scripts/python.exe MPC/src/baseline/03_grf_to_tau.py  # F -> tau 검증 (핵심)
+.venv/Scripts/python.exe MPC/src/baseline/04_stand.py       # 30초 + 외란 테스트
+.venv/Scripts/python.exe MPC/src/baseline/04_stand.py --view --pd  # 뷰어로 서 있는 모습
 ```
 
 ## 파일
 
 | 파일 | 역할 |
 |---|---|
-| [src/paths.py](MPC/src/paths.py) | 경로 상수 |
-| [src/g1_model.py](MPC/src/g1_model.py) | 모델 로더, position→motor 변환, crouch 자세 |
-| [src/02_inspect.py](MPC/src/02_inspect.py) | body/joint/dof/actuator/site 덤프 |
-| [src/01_view.py](MPC/src/01_view.py) | 무제어 뷰어 |
-| [src/03_grf_to_tau.py](MPC/src/03_grf_to_tau.py) | GRF→토크 변환 유도 + 검증 |
-| [src/04_stand.py](MPC/src/04_stand.py) | 준정적 서 있기 컨트롤러 (lstsq) |
-| [src/mpc_srb.py](MPC/src/mpc_srb.py) | SRB 상태방정식 (A_c, B_c), 파라미터·상태 추출 |
-| [src/mpc_qp.py](MPC/src/mpc_qp.py) | 제약 + condensed QP + quadprog 솔버 + wrench→τ |
-| [src/mpc_log.py](MPC/src/mpc_log.py) / [src/plot_log.py](MPC/src/plot_log.py) | x/u 로거 (npz+csv) / 플롯 |
-| [src/05_sign_check.py](MPC/src/05_sign_check.py) ~ [src/08_standing_mpc.py](MPC/src/08_standing_mpc.py) | MPC Step 1~4 검증 스크립트 ([MPC_NOTES.md](MPC/MPC_NOTES.md)) |
-| [src/gait.py](MPC/src/gait.py) / [src/09_walk.py](MPC/src/09_walk.py) | gait·착지점·swing / 보행 컨트롤러 (Step 5~6) |
-| [src/10_constraint_check.py](MPC/src/10_constraint_check.py) | CoP 제약 h 결합항 수치 검증 |
+| [src/paths.py](MPC/src/baseline/paths.py) | 경로 상수 |
+| [src/g1_model.py](MPC/src/baseline/g1_model.py) | 모델 로더, position→motor 변환, crouch 자세 |
+| [src/02_inspect.py](MPC/src/baseline/02_inspect.py) | body/joint/dof/actuator/site 덤프 |
+| [src/01_view.py](MPC/src/baseline/01_view.py) | 무제어 뷰어 |
+| [src/03_grf_to_tau.py](MPC/src/baseline/03_grf_to_tau.py) | GRF→토크 변환 유도 + 검증 |
+| [src/04_stand.py](MPC/src/baseline/04_stand.py) | 준정적 서 있기 컨트롤러 (lstsq) |
+| [src/mpc_srb.py](MPC/src/baseline/mpc_srb.py) | SRB 상태방정식 (A_c, B_c), 파라미터·상태 추출 |
+| [src/mpc_qp.py](MPC/src/baseline/mpc_qp.py) | 제약 + condensed QP + quadprog 솔버 + wrench→τ |
+| [src/mpc_log.py](MPC/src/baseline/mpc_log.py) / [src/plot_log.py](MPC/src/baseline/plot_log.py) | x/u 로거 (npz+csv) / 플롯 |
+| [src/05_sign_check.py](MPC/src/baseline/05_sign_check.py) ~ [src/08_standing_mpc.py](MPC/src/baseline/08_standing_mpc.py) | MPC Step 1~4 검증 스크립트 ([MPC_NOTES.md](MPC/MPC_NOTES.md)) |
+| [src/gait.py](MPC/src/baseline/gait.py) / [src/09_walk.py](MPC/src/baseline/09_walk.py) | gait·착지점·swing / 보행 컨트롤러 (Step 5~6) |
+| [src/10_constraint_check.py](MPC/src/baseline/10_constraint_check.py) | CoP 제약 h 결합항 수치 검증 |
 | **[PHYSICS_MAP.md](MPC/PHYSICS_MAP.md)** | **물리 → 구현 전체 지도**: 모든 근사·휴리스틱·미해결 22건 |
 
 ## 걸렸던 것 두 개 (다음에 또 만날 것)
@@ -269,11 +269,11 @@ CoM x       = 0.0237
 이번엔 최소 fz가 +30.23 N 으로 전부 양수라 물리적으로 성립했지만 그건 **운**이다.
 CoM이 지지다각형 가장자리로 가면 lstsq는 태연히 음수 fz(= 땅이 발을 잡아당김)를 뱉는다.
 그 순간부터 QP가 필요해지고, 그게 **층2 교체**의 시작점이다 —
-[src/04_stand.py](MPC/src/04_stand.py) `QuasiStaticStand.__call__` 의 `lstsq` 한 줄 자리.
+[src/04_stand.py](MPC/src/baseline/04_stand.py) `QuasiStaticStand.__call__` 의 `lstsq` 한 줄 자리.
 
 ## Q. MPC 가중치는 어떻게 정했나
 
-값 ([src/mpc_qp.py](MPC/src/mpc_qp.py) 상단, x = [Θ, p, ω, v, g] 순):
+값 ([src/mpc_qp.py](MPC/src/baseline/mpc_qp.py) 상단, x = [Θ, p, ω, v, g] 순):
 
 ```
 Q = diag[ 10, 10, 20,   50, 50, 300,   5, 5, 5,   20, 20, 50,   0 ]
@@ -304,7 +304,7 @@ R = 1e-5 균일 (힘/모멘트 동일),  단 u_ref = 중력 피드포워드(발�
 [500 Hz]  τ = qfrc_bias − JᵀW(stance) + 임피던스(swing) + M·q̈_swing(WBC-lite) + 상체 PD
 ```
 
-**100 Hz 단계별** ([src/09_walk.py](MPC/src/09_walk.py) `update_mpc`):
+**100 Hz 단계별** ([src/09_walk.py](MPC/src/baseline/09_walk.py) `update_mpc`):
 1. **상태**: x = [Θ, CoM위치, ω, CoM속도, g]. p·v는 골반 아닌 **전신 CoM**,
    ω는 **각운동량 역산**(ω=I⁻¹L) — 골반 각속도를 쓰면 내부 진동에 MPC가 과반응(발산 이력).
 2. **gait 시계**: 주기 0.8 s, stance 75%, 좌우 위상 0.5 차. 미래 0.8 s 접촉표(16×2)를 MPC에 전달.
@@ -433,7 +433,7 @@ R 크다="힘 비쌈"→살살→느린 루프. 즉 Q/R 비율이 컨트롤러�
 
 ## Q. "상체만 SRB" 실험 — 왜 우리한테는 안 됐나 (2026-09-15)
 
-reference 처럼 다리를 SRB 에서 빼는 실험 ([src/11_walk_srb_upper.py](MPC/src/11_walk_srb_upper.py),
+reference 처럼 다리를 SRB 에서 빼는 실험 ([src/11_walk_srb_upper.py](MPC/src/baseline/11_walk_srb_upper.py),
 09_walk 에 훅 2개만 뚫어 diff 가 곧 개념 차이가 되게 함). 결과는 **전 영역 패배**
 (직진 0.3: baseline 20 s ✓ vs 상체 변형 4~13 s; 회전 1.3: 완주 vs 8 s). 배운 것 셋:
 

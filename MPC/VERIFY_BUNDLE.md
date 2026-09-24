@@ -33,21 +33,21 @@
 ```
 
 층1(재료: 상태방정식·제약·참조 조립)과 층2(솔버) 구분 그대로:
-- 층1: [src/mpc_srb.py](src/mpc_srb.py) (동역학) + [src/mpc_qp.py](src/mpc_qp.py) 의 행렬 조립
+- 층1: [src/baseline/mpc_srb.py](src/baseline/mpc_srb.py) (동역학) + [src/baseline/mpc_qp.py](src/baseline/mpc_qp.py) 의 행렬 조립
 - 층2: `WrenchMPC._solve_qp` 의 quadprog 호출 — **여기 한 줄이 교체 지점**
 
 ## 1. 파일 맵
 
 | 파일 | 역할 |
 |---|---|
-| [src/mpc_srb.py](src/mpc_srb.py) | SRB 상태 정의, 파라미터 추출, A_c/B_c 조립, 이산화, 상태 추정 |
-| [src/mpc_qp.py](src/mpc_qp.py) | 제약 C_foot(10행), condensed QP 조립, quadprog 솔버, wrench→τ |
-| [src/mpc_log.py](src/mpc_log.py) | x/u/τ/솔버통계 로거 → `logs/*.npz` + `.csv` |
-| [src/plot_log.py](src/plot_log.py) | 로그 플롯 → PNG |
-| [src/05_sign_check.py](src/05_sign_check.py) | Step 1: 부호 규약 검증 |
-| [src/06_standing_qp.py](src/06_standing_qp.py) | Step 2: N=1 QP 서 있기 + lstsq 회귀 비교 |
-| [src/07_b_autodiff_check.py](src/07_b_autodiff_check.py) | Step 3: CasADi 자동미분으로 A, B 검증 |
-| [src/08_standing_mpc.py](src/08_standing_mpc.py) | Step 4: N=10 MPC + 외란 (`--view`, `--push F`) |
+| [src/baseline/mpc_srb.py](src/baseline/mpc_srb.py) | SRB 상태 정의, 파라미터 추출, A_c/B_c 조립, 이산화, 상태 추정 |
+| [src/baseline/mpc_qp.py](src/baseline/mpc_qp.py) | 제약 C_foot(10행), condensed QP 조립, quadprog 솔버, wrench→τ |
+| [src/baseline/mpc_log.py](src/baseline/mpc_log.py) | x/u/τ/솔버통계 로거 → `logs/*.npz` + `.csv` |
+| [src/baseline/plot_log.py](src/baseline/plot_log.py) | 로그 플롯 → PNG |
+| [src/baseline/05_sign_check.py](src/baseline/05_sign_check.py) | Step 1: 부호 규약 검증 |
+| [src/baseline/06_standing_qp.py](src/baseline/06_standing_qp.py) | Step 2: N=1 QP 서 있기 + lstsq 회귀 비교 |
+| [src/baseline/07_b_autodiff_check.py](src/baseline/07_b_autodiff_check.py) | Step 3: CasADi 자동미분으로 A, B 검증 |
+| [src/baseline/08_standing_mpc.py](src/baseline/08_standing_mpc.py) | Step 4: N=10 MPC + 외란 (`--view`, `--push F`) |
 
 ## 2. 모델 요약
 
@@ -59,7 +59,7 @@
 작용하는 wrench, world frame**. quadruped(발4×힘3)와 차원이 12로 같지만 내용이 다름:
 발 2개 × (힘3 + **발목 모멘트3**). 모멘트가 생기는 이유는 발이 면접촉이라서.
 
-연속 동역학 → [src/mpc_srb.py](src/mpc_srb.py) `continuous_AB`:
+연속 동역학 → [src/baseline/mpc_srb.py](src/baseline/mpc_srb.py) `continuous_AB`:
 ```
 Θ̇ = Rz(ψ)ᵀ ω                       ← Di Carlo 식 (12), 작은 roll/pitch 근사
 ṗ = v
@@ -192,18 +192,18 @@ SRB의 구조적 결손이고, 상체 PD는 관측을 고친 게 아니라 로�
 
 ```bash
 # 실행하면 logs/ 에 npz+csv 자동 저장 (MPC 스텝마다 t, x, x_ref, u, tau, solve_ms, ...)
-.venv/Scripts/python.exe MPC/src/08_standing_mpc.py            # 헤드리스 20s+push40N
-.venv/Scripts/python.exe MPC/src/08_standing_mpc.py --push 80  # 외란 크기 변경
-.venv/Scripts/python.exe MPC/src/08_standing_mpc.py --view     # 뷰어 (Ctrl+우클릭 드래그=밀기)
+.venv/Scripts/python.exe MPC/src/baseline/08_standing_mpc.py            # 헤드리스 20s+push40N
+.venv/Scripts/python.exe MPC/src/baseline/08_standing_mpc.py --push 80  # 외란 크기 변경
+.venv/Scripts/python.exe MPC/src/baseline/08_standing_mpc.py --view     # 뷰어 (Ctrl+우클릭 드래그=밀기)
 
-.venv/Scripts/python.exe MPC/src/plot_log.py                   # 최근 로그 → PNG
-.venv/Scripts/python.exe MPC/src/plot_log.py MPC/logs/xxx.npz      # 지정 로그
+.venv/Scripts/python.exe MPC/src/baseline/plot_log.py                   # 최근 로그 → PNG
+.venv/Scripts/python.exe MPC/src/baseline/plot_log.py MPC/logs/xxx.npz      # 지정 로그
 ```
 csv는 엑셀에서 바로 열린다 (열: t, x 13개, ref 13개, u 12개, solve_ms, violation).
 
 튜닝 지점 (사용자 몫):
-- [src/mpc_qp.py](src/mpc_qp.py) 상단 `Q_DEFAULT`, `R_FORCE`, `R_MOMENT`
-- [src/08_standing_mpc.py](src/08_standing_mpc.py) 상단 `HORIZON`, `DT_MPC`, `DECIM`
+- [src/baseline/mpc_qp.py](src/baseline/mpc_qp.py) 상단 `Q_DEFAULT`, `R_FORCE`, `R_MOMENT`
+- [src/baseline/08_standing_mpc.py](src/baseline/08_standing_mpc.py) 상단 `HORIZON`, `DT_MPC`, `DECIM`
 - `make_params(mu=, fz_min=, fz_max=)`
 
 ---
@@ -214,9 +214,9 @@ csv는 엑셀에서 바로 열린다 (열: t, x 13개, ref 13개, u 12개, solve
 
 | 파일 | 역할 |
 |---|---|
-| [src/gait.py](src/gait.py) | `Gait`(고정 타이밍 스케줄), `raibert_target`(capture point 착지점), `SwingController`(궤적+임피던스) |
-| [src/mpc_qp.py](src/mpc_qp.py) `solve_gait` | 접촉 스케줄 반영: **시변 B_d[k]** + swing 발 **W=0 등식 제약** (quadprog meq) |
-| [src/09_walk.py](src/09_walk.py) | `WalkController` + Step 5/6 검증 (`--vx`, `--view`, `--seconds`) |
+| [src/baseline/gait.py](src/baseline/gait.py) | `Gait`(고정 타이밍 스케줄), `raibert_target`(capture point 착지점), `SwingController`(궤적+임피던스) |
+| [src/baseline/mpc_qp.py](src/baseline/mpc_qp.py) `solve_gait` | 접촉 스케줄 반영: **시변 B_d[k]** + swing 발 **W=0 등식 제약** (quadprog meq) |
+| [src/baseline/09_walk.py](src/baseline/09_walk.py) | `WalkController` + Step 5/6 검증 (`--vx`, `--view`, `--seconds`) |
 
 구조 (매 사이클):
 ```
@@ -259,7 +259,7 @@ swing 반작용으로 골반 pitch가 0.2 s 만에 +21.9° — 그런데 각운�
 CoM이 옆으로 밀리면 발도 따라가서 아무것도 위치를 고정하지 않음 (y −0.155 까지
 표류). 또 Raibert 원형 `v·T_st/2 + k·v` 는 속도계수 0.48 — 역진자 정답(capture
 point) `1/ω₀ = 1/√(g/h) = 0.26` 의 2배라 **매 스텝 과잉 스텝 → 에너지 주입**.
-→ [src/gait.py](src/gait.py) `raibert_target` 을 capture point 기반으로 재작성:
+→ [src/baseline/gait.py](src/baseline/gait.py) `raibert_target` 을 capture point 기반으로 재작성:
 `p = CoM + offset + v_cmd·T_st/2 + (v−v_cmd)/ω₀ + k_a(anchor−CoM)` (y만 약한 앵커).
 
 **(4) py 참조가 항상 중앙이면 MPC가 체중이동 없이 발목으로만 버틴다.**
@@ -299,7 +299,7 @@ CoM 이 밀린 쪽으로 발을 **더** 내딛는 +부호 위치 피드백이다
 | −0.3 (이전 anchor) | 23 s 전도 |
 
 교훈: 발디딤에는 **속도 피드백(capture, 1/ω₀)과 위치 피드백(+k_pos) 둘 다**
-필요하고, 위치항의 부호는 "밀린 쪽으로 더 딛기"다. → [src/gait.py](src/gait.py)
+필요하고, 위치항의 부호는 "밀린 쪽으로 더 딛기"다. → [src/baseline/gait.py](src/baseline/gait.py)
 
 ## 13. 튜닝 민감도 기록 (같은 날 실측 — 건드릴 때 참고)
 
@@ -374,7 +374,7 @@ m_ground,y = my + h·Fx,   m_ground,x = mx − h·Fy      (h = h_sole = 0.035, �
   없는 테스트였다** (검증 리포트의 정확한 지적)
 - yaw≠0 잠복 버그(제약이 world x=앞 가정)도 같이 수정: `C·(Rz(ψ)ᵀW) ≤ d`
 
-**검증** ([src/10_constraint_check.py](src/10_constraint_check.py)): 접촉점 4개에
+**검증** ([src/baseline/10_constraint_check.py](src/baseline/10_constraint_check.py)): 접촉점 4개에
 무작위 점힘(음수 fz·마찰 초과 포함 → 위반 케이스도 생성)을 뿌려, 점힘에서 직접 계산한
 지면 CoP(경로 1)와 site wrench 로 조립한 제약(경로 2)을 대조:
 
@@ -450,7 +450,7 @@ m_ground,y = my + h·Fx,   m_ground,x = mx − h·Fy      (h = h_sole = 0.035, �
 
 ---
 
-# FILE: src/mpc_srb.py
+# FILE: src/baseline/mpc_srb.py
 
 ```python
 """SRB(single rigid body) 모델 — 층1 재료 (상태방정식).
@@ -647,7 +647,7 @@ def discretize(Ac: np.ndarray, Bc: np.ndarray, dt: float):
 
 ---
 
-# FILE: src/mpc_qp.py
+# FILE: src/baseline/mpc_qp.py
 
 ```python
 """Wrench MPC — 제약 조립(층1) + condensed QP + 솔버(층2).
@@ -969,7 +969,7 @@ def actuated_dofs(m) -> np.ndarray:
 
 ---
 
-# FILE: src/gait.py
+# FILE: src/baseline/gait.py
 
 ```python
 """Gait 스케줄 + Raibert 착지점 + swing 궤적/임피던스 (명세 5, 6절).
@@ -1158,7 +1158,7 @@ class SwingController:
 
 ---
 
-# FILE: src/09_walk.py
+# FILE: src/baseline/09_walk.py
 
 ```python
 """Step 5-6 — 보행: gait 스케줄 + Raibert + swing 임피던스 + gait MPC.
@@ -1169,9 +1169,9 @@ class SwingController:
   [500 Hz] τ = qfrc_bias − Σ_stance JᵀW + Σ_swing Jᵀ(임피던스 F, m)
 
 사용:
-  .venv/Scripts/python.exe MPC/src/09_walk.py               # 제자리 스텝 (Step 5)
-  .venv/Scripts/python.exe MPC/src/09_walk.py --vx 0.3      # 전진 (Step 6)
-  .venv/Scripts/python.exe MPC/src/09_walk.py --view --vx 0.3
+  .venv/Scripts/python.exe MPC/src/baseline/09_walk.py               # 제자리 스텝 (Step 5)
+  .venv/Scripts/python.exe MPC/src/baseline/09_walk.py --vx 0.3      # 전진 (Step 6)
+  .venv/Scripts/python.exe MPC/src/baseline/09_walk.py --view --vx 0.3
 """
 from __future__ import annotations
 
@@ -1465,7 +1465,7 @@ if __name__ == "__main__":
 
 ---
 
-# FILE: src/10_constraint_check.py
+# FILE: src/baseline/10_constraint_check.py
 
 ```python
 """CoP 제약 h 결합항 검증 (검증 리포트 §1 의 요구사항).
@@ -1479,7 +1479,7 @@ if __name__ == "__main__":
 추가로 h=0 인 옛 제약이 얼마나 오판하는지 센다.
 yaw=0.7 rad 회전 케이스(world frame 제약)도 검증.
 
-사용: .venv/Scripts/python.exe MPC/src/10_constraint_check.py
+사용: .venv/Scripts/python.exe MPC/src/baseline/10_constraint_check.py
 """
 from __future__ import annotations
 

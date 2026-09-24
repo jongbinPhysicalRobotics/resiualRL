@@ -5,6 +5,9 @@
 > 코드 어디에 박혀 있는지 바로 찾을 수 있게 했다.
 >
 > 전체 흐름은 [Q&A/SUMMARY_0915-0918.md](../Q&A/SUMMARY_0915-0918.md) 를 먼저.
+>
+> **2026-09-24 폴더 분리**: `src/` 를 `baseline/` (기존 전부) · `affine/` (아핀항) · `split/` (분리, 보류) 로 나눴다.
+> 각 폴더는 자기 파일만으로 실행된다 (공용 모듈은 복사본). 아래 링크는 전부 `baseline/` 을 가리킨다 — 안내는 [src/README.md](src/README.md).
 
 ---
 
@@ -37,11 +40,11 @@
 
 | 순서 | 파일 | 줄 | 무엇 |
 |---|---|---|---|
-| **①** | [src/mpc_srb.py](src/mpc_srb.py) | 190 | **모델** — 상태 x(13), 연속 A·B, 이산화 |
-| **②** | [src/gait.py](src/gait.py) | 277 | **계획** — 접촉 스케줄, 착지점, 스윙 궤적·임피던스 |
-| **③** | [src/mpc_qp.py](src/mpc_qp.py) | 345 | **최적화** — 제약 18행, condensed QP |
-| **④** | [src/09_walk.py](src/09_walk.py) | 661 | **조립** — 셋을 엮어 토크로 |
-| ⑤ | [src/g1_model.py](src/g1_model.py) | 114 | 모델 로딩, 토크 액추에이터 변환, `set_crouch` |
+| **①** | [src/baseline/mpc_srb.py](src/baseline/mpc_srb.py) | 190 | **모델** — 상태 x(13), 연속 A·B, 이산화 |
+| **②** | [src/baseline/gait.py](src/baseline/gait.py) | 277 | **계획** — 접촉 스케줄, 착지점, 스윙 궤적·임피던스 |
+| **③** | [src/baseline/mpc_qp.py](src/baseline/mpc_qp.py) | 345 | **최적화** — 제약 18행, condensed QP |
+| **④** | [src/baseline/09_walk.py](src/baseline/09_walk.py) | 661 | **조립** — 셋을 엮어 토크로 |
+| ⑤ | [src/baseline/g1_model.py](src/baseline/g1_model.py) | 114 | 모델 로딩, 토크 액추에이터 변환, `set_crouch` |
 
 ---
 
@@ -149,15 +152,15 @@
 **보폭 작업 전이라면** `12` 도 (지금 상태의 기준선이 된다).
 
 ```bash
-.venv/Scripts/python.exe MPC/src/03_grf_to_tau.py
-.venv/Scripts/python.exe MPC/src/05_sign_check.py
-.venv/Scripts/python.exe MPC/src/10_constraint_check.py
-.venv/Scripts/python.exe MPC/src/12_contact_analysis.py --vx 0.5 --plot
-.venv/Scripts/python.exe MPC/src/14_toe_lift.py --vx 0.5
-.venv/Scripts/python.exe MPC/src/15_toe_speed.py --vx 0.3 0.5 0.6 0.7 --seconds 120
-.venv/Scripts/python.exe MPC/src/16_td_ab.py --vx 0.6 0.7 --var 1:0 1.25:0 --seconds 120
-.venv/Scripts/python.exe MPC/src/18_gait_quality.py --vx 0.5 0.7 --var "tds=1.25,copm=0.9,wzp=1" --seconds 120
-.venv/Scripts/python.exe MPC/src/20_timing_log.py --vx 0.7 --seconds 120 --out MPC/logs/timing_0p7.npz
+.venv/Scripts/python.exe MPC/src/baseline/03_grf_to_tau.py
+.venv/Scripts/python.exe MPC/src/baseline/05_sign_check.py
+.venv/Scripts/python.exe MPC/src/baseline/10_constraint_check.py
+.venv/Scripts/python.exe MPC/src/baseline/12_contact_analysis.py --vx 0.5 --plot
+.venv/Scripts/python.exe MPC/src/baseline/14_toe_lift.py --vx 0.5
+.venv/Scripts/python.exe MPC/src/baseline/15_toe_speed.py --vx 0.3 0.5 0.6 0.7 --seconds 120
+.venv/Scripts/python.exe MPC/src/baseline/16_td_ab.py --vx 0.6 0.7 --var 1:0 1.25:0 --seconds 120
+.venv/Scripts/python.exe MPC/src/baseline/18_gait_quality.py --vx 0.5 0.7 --var "tds=1.25,copm=0.9,wzp=1" --seconds 120
+.venv/Scripts/python.exe MPC/src/baseline/20_timing_log.py --vx 0.7 --seconds 120 --out MPC/logs/timing_0p7.npz
 ```
 
 ---
@@ -165,7 +168,7 @@
 ## 5. 현재 권장 실행 구성
 
 ```bash
-.venv/Scripts/python.exe MPC/src/09_walk.py --view --vx 0.5 \
+.venv/Scripts/python.exe MPC/src/baseline/09_walk.py --view --vx 0.5 \
     --uppd 300 --swingid --softland --lamswing --wn 30 --zeta 0.7 \
     --sf 0.57 --qpy 300 --swingyaw --sidew 13 --tdscale 1.25 --copm 0.9 --wzpel 1 --wxpel 0.5
 ```
@@ -198,7 +201,7 @@
 
 | 파일 | 역할 |
 |---|---|
-| `src/mpc_log.py` / `src/plot_log.py` | 로그 저장 / 6×2 플롯 (상태·입력·토크·솔브타임·스윙추종) |
+| `src/baseline/mpc_log.py` / `src/baseline/plot_log.py` | 로그 저장 / 6×2 플롯 (상태·입력·토크·솔브타임·스윙추종) |
 | [`../deployed RL/analysis/run_g1_policy.py`](../deployed%20RL/analysis/run_g1_policy.py) | 배포 RL 정책 헤드리스 계측 |
 | [`../deployed RL/analysis/sweep.py`](../deployed%20RL/analysis/sweep.py) | 속도 정밀 스윕 (보폭·sf·주기 회귀의 출처) |
 | [`../deployed RL/analysis/detail.py`](../deployed%20RL/analysis/detail.py) | gait 타이밍, ω(pelvis) vs ω(전신 L) |
@@ -210,12 +213,12 @@
 
 | 우선순위 | 할 일 | 코드 위치 |
 |---|---|---|
-| ~~1~~ ✅ | ~~보폭~~ → **`--sidew 13` 채택 (9/21 Q7)** | [09_walk.py](src/09_walk.py) `side_width()` / `side_offset_at()` |
-| **2** | **`Fz,min` 램프** | [mpc_qp.py L54](src/mpc_qp.py#L54) `−Fz ≤ −fz_min` 행 + `SRBParams.fz_min` |
-| 3 | `sf(v)` 속도 함수 | [gait.py L22](src/gait.py#L22) `Gait.stance_frac` |
-| ~~4~~ ✅ | ~~스윙 토크 클램프~~ → **원인은 이륙 첫 틱 스윙 시작점 버그, 수정 후 초과 0 % (9/22 Q13)** | [09_walk.py](src/09_walk.py) `torque()` 의 `liftoff_fix` |
-| ~~5~~ ✗ | ~~`J̇q̇` 보상~~ → **이륙 버그 수정 뒤 재시험해도 기각 — 골반 반작용을 받아 줄 통로가 없다 (9/23 Q4~Q7)** | [09_walk.py](src/09_walk.py) `swing_id` 블록, `--jdot` |
-| **6** | **스윙 반작용을 MPC 에** — 두 길을 새 파일로 구현 (9/23 Q11): ① 아핀항 ② reference 식 분리 | [23_walk_affine.py](src/23_walk_affine.py) · [24_walk_split.py](src/24_walk_split.py) |
+| ~~1~~ ✅ | ~~보폭~~ → **`--sidew 13` 채택 (9/21 Q7)** | [09_walk.py](src/baseline/09_walk.py) `side_width()` / `side_offset_at()` |
+| **2** | **`Fz,min` 램프** | [mpc_qp.py L54](src/baseline/mpc_qp.py#L54) `−Fz ≤ −fz_min` 행 + `SRBParams.fz_min` |
+| 3 | `sf(v)` 속도 함수 | [gait.py L22](src/baseline/gait.py#L22) `Gait.stance_frac` |
+| ~~4~~ ✅ | ~~스윙 토크 클램프~~ → **원인은 이륙 첫 틱 스윙 시작점 버그, 수정 후 초과 0 % (9/22 Q13)** | [09_walk.py](src/baseline/09_walk.py) `torque()` 의 `liftoff_fix` |
+| ~~5~~ ✗ | ~~`J̇q̇` 보상~~ → **이륙 버그 수정 뒤 재시험해도 기각 — 골반 반작용을 받아 줄 통로가 없다 (9/23 Q4~Q7)** | [09_walk.py](src/baseline/09_walk.py) `swing_id` 블록, `--jdot` |
+| **6** | **스윙 반작용을 MPC 에** — 두 길을 새 파일로 구현 (9/23 Q11): ① 아핀항 ② reference 식 분리 | [23_walk_affine.py](src/affine/23_walk_affine.py) · [24_walk_split.py](src/split/24_walk_split.py) |
 
 
 > **뷰어 옵션 (9/22 Q6·Q7)**: 기본 = Windows 부스트 + 화면 갱신 ~29 Hz + 궤적은 갱신 때만 + 실시간 맞춤. `--noboost` · `--syncevery N` (500/N Hz) · `--drawmpc` · `--fast` (안 기다림) · `--lite` (그림자·반사 끔, 효과 불분명) · `--vsec S` (S 초 뒤 자동 종료) · `--timelog 파일` (뷰어 구간별 시간 기록).

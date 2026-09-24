@@ -53,11 +53,11 @@ python -m venv .venv
 
 ```bash
 # MPC — 제자리 스텝 (6초)
-.venv/Scripts/python.exe MPC/src/09_walk.py --seconds 6 --uppd 300 --swingid --softland \
+.venv/Scripts/python.exe MPC/src/baseline/09_walk.py --seconds 6 --uppd 300 --swingid --softland \
     --lamswing --wn 30 --zeta 0.7 --sf 0.57 --qpy 300 --swingyaw
 
 # 제약 검증 (LP 대조)
-.venv/Scripts/python.exe MPC/src/10_constraint_check.py
+.venv/Scripts/python.exe MPC/src/baseline/10_constraint_check.py
 
 # 배포 정책 계측
 .venv/Scripts/python.exe "deployed RL/analysis/run_g1_policy.py" --vx 1.0 --seconds 30

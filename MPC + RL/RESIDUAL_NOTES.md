@@ -183,7 +183,7 @@ E2E 를 **"잘 걷는 대조군에서 계측하기"** 용도로 쓰려던 것이
 τ_RNEA = M(q_MPC)q̈_MPC + h(q_MPC,q̇_MPC) − J(q_MPC)ᵀF_MPC
 τ_MPC  = Kp(q_MPC − q) + Kd(q̇_MPC − q̇) + τ_RNEA
 ```
-우리 ([09_walk.py](../MPC/src/09_walk.py) `torque()`):
+우리 ([09_walk.py](../MPC/src/baseline/09_walk.py) `torque()`):
 ```
 τ = qfrc_bias − JᵀW           (+ M q̈_swing  ← --swingid)
 ```
