@@ -28,6 +28,7 @@ F="--uppd 300 --swingid --softland --lamswing --wn 30 --zeta 0.7 --sf 0.57 --qpy
 | `11_walk_srb_upper.py` | ○ 원본 | — | 복사 (분리가 상속) |
 | `walk_cli.py` | — | ○ | 복사 |
 | `23_walk_affine.py` `leg_momentum.py` | — | ○ | — |
+| `26_push_walk.py` (걷는 중 밀기 시험) | — | ○ | — |
 | `24_walk_split.py` | — | — | ○ |
 
 로그는 폴더와 무관하게 `MPC/logs/` 에 쌓인다 (`paths.MPC_ROOT` 가 위로 올라가며 `MPC` 폴더를 찾는다).
