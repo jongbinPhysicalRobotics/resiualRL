@@ -40,6 +40,9 @@
   --turnfix            회전 보행 (Q&A 9/24 Q34): 강체 회전의 다리 몫 (Î − Î_상체) ω_참조 를 아핀항에 더한다.
                        계획 L_다리 엔 이 몫이 없어 (엉덩이 속도에 회전 성분 없음 + 평균 제거) 몸 전체가 ψ̇ 로 돌 때
                        모델이 골반 yaw 율을 1.5 ~ 1.7 배로 예측했다 → 1.2 ~ 1.4 배. 직진 (ω_참조 = 0) 에선 아무것도 안 바뀐다.
+  --mixI               골반 축 (α > 0) 의 ω̇ 식을 정확하게 (Q&A 9/24 Q35): ω̇ = [S_w I_전신⁻¹ + S_p I_상체⁻¹]τ − S_p I_상체⁻¹ L̇_다리.
+                       기본 (끔) 은 입력 행렬에 I_전신 을 쓰는 근사. 하이브리드 H (--wzpel 1 --wxpel 0) 에선 오히려 나빴다
+                       (골반 yaw 3.6 → 6.5°). 전부 전신 (α = 0) 이면 아무것도 안 바뀐다.
   (회전은 09_walk 의 --swayrot 과 같이 — 체중이동 참조를 몸 옆 방향으로. 없으면 stance 0.57 에서 제자리 회전 전도)
 
 1 차 결과 (9/23 Q11, 40 s): 예측 pitch 상관 지평 전체 0.87~0.98.  c 항이 몸을 +7~13° 앞으로 기울였는데
@@ -86,6 +89,16 @@ class AffineMPC(WrenchMPC):
         self.last_d = None
         self.ref_shape = bool(ref_shape)                # ω 참조 = 골반 정지 값 (Q30)
         self.turn_fix = False                           # 강체 회전의 다리 몫을 아핀항에 (Q34)
+        self.mix_I = False                              # 골반 축의 ω̇ 식을 상체 관성으로 (Q35)
+
+    def omega_gain(self, psi):
+        """ω̇ = K τ − … 의 K (world).  섞은 상태 ω = S_w ω_전신 + S_p ω_골반 (S_p = diag α) 을 미분하면
+        ω̇ = [S_w I_전신⁻¹ + S_p I_상체⁻¹] τ − S_p I_상체⁻¹ L̇_다리  (Q35).  mix_I 가 꺼져 있으면 Î⁻¹ (기존 근사)."""
+        Rz_ = rz(psi)
+        if not self.mix_I:
+            return np.linalg.inv(Rz_ @ self.p.I_body @ Rz_.T)
+        K_b = np.diag(1.0 - self.alpha) @ np.linalg.inv(self.p.I_body) + np.diag(self.alpha) @ self.I_ub_inv
+        return Rz_ @ K_b @ Rz_.T
 
     def rigid_L(self, psi, W):
         """골반이 참조 각속도 W (N,3 world) 로 돌 때 다리가 같이 돌며 갖는 몫 (Î − Î_상체) W  (Q34).
@@ -110,7 +123,10 @@ class AffineMPC(WrenchMPC):
             cc = np.zeros(NX)
             cc[0:3] = -(1.0 - self.alpha) * (self.I_ub_inv @ (Rz_.T @ L_traj[k]))
             if self.aff_w and self.alpha.any():
-                cc[6:9] = -I_w_inv @ (Rz_ @ (self.alpha * (Rz_.T @ Ldot[k])))
+                if self.mix_I:      # 정확: −S_p I_상체⁻¹ L̇_다리 (Q35)
+                    cc[6:9] = -Rz_ @ (self.alpha * (self.I_ub_inv @ (Rz_.T @ Ldot[k])))
+                else:               # 기존 근사: 입력 행렬과 같은 I_전신
+                    cc[6:9] = -I_w_inv @ (Rz_ @ (self.alpha * (Rz_.T @ Ldot[k])))
             c_d[k] = cc * self.dt + 0.5 * (Ac @ cc) * self.dt * self.dt
         return c_d
 
@@ -147,9 +163,13 @@ class AffineMPC(WrenchMPC):
                 X_ref[k, 6:9] = X_ref[k, 6:9] + Rz_ @ w_add_b
 
         Bd = []
+        if self.mix_I:      # ω̇ 행의 Î⁻¹ 를 축별 관성 K 로 바꾸는 행렬 (Q35)
+            G_w = self.omega_gain(psi) @ (Rz_ @ self.p.I_body @ Rz_.T)
         for k in range(N):
             com_k = x0[3:6] if k == 0 else X_ref[k, 3:6]
             _, Bc = continuous_AB(self.p, psi, foot_pos_traj[k] - com_k)
+            if self.mix_I:
+                Bc[6:9] = G_w @ Bc[6:9]
             for i in range(N_FEET):
                 if not contact[k, i]:
                     Bc[:, NU_PER_FOOT * i:NU_PER_FOOT * (i + 1)] = 0.0
@@ -235,7 +255,7 @@ class AffineWalk(walk.WalkController):
 
     def __init__(self, m, d, aff_mode="full", aff_anchor=True, aff_w=True,
                  aff_anchor_tau=0.1, aff_fade=None, aff_scale=1.0, aff_demean=True, aff_orbit=False,
-                 aff_refshape=False, aff_upperI=False, aff_turnfix=False, **kw):
+                 aff_refshape=False, aff_upperI=False, aff_turnfix=False, aff_mixI=False, **kw):
         super().__init__(m, d, **kw)
         self.aff_scale = float(aff_scale)               # 예측 L 배율 (--check: 계획 예측 RMS 가 실측의 1.4~1.6 배)
         self.aff_demean = bool(aff_demean)              # 지평 평균 제거
@@ -255,6 +275,7 @@ class AffineWalk(walk.WalkController):
         self.mpc.L_provider = self.predict_leg_L
         self.mpc.ref_shape = bool(aff_refshape)
         self.mpc.turn_fix = bool(aff_turnfix)
+        self.mpc.mix_I = bool(aff_mixI)
         self.legpm = [lm.LegPointModel(m, d, i) for i in range(2)]
         self.aff_anchor = aff_anchor
         self._t_now, self._d_now = 0.0, d
@@ -460,6 +481,7 @@ if __name__ == "__main__":
     rsh = "--refshape" in sys.argv                # ω 참조 = 골반 정지 값 (Q30)
     uI = "--upperI" in sys.argv                   # MPC 관성 = 상체 (Q32)
     tfx = "--turnfix" in sys.argv                 # 강체 회전의 다리 몫 (Q34)
+    mxI = "--mixI" in sys.argv                    # 골반 축 ω̇ 식을 상체 관성으로 (Q35)
     if A["decim"]:
         walk.DECIM = A["decim"]
         print(f"  [실험] MPC 재풀이 {500 / walk.DECIM:.0f} Hz (DECIM={walk.DECIM})")
@@ -468,7 +490,7 @@ if __name__ == "__main__":
         sys.exit(0)
     ctor = functools.partial(AffineWalk, aff_mode=mode, aff_anchor=anchor, aff_w=affw,
                              aff_anchor_tau=atau, aff_fade=fade, aff_scale=ascl, aff_demean=admn, aff_orbit=orb,
-                             aff_refshape=rsh, aff_upperI=uI, aff_turnfix=tfx)
+                             aff_refshape=rsh, aff_upperI=uI, aff_turnfix=tfx, aff_mixI=mxI)
     if A["view"]:
         walk.view(A["vx"], ctor=ctor, **A["common"], **A["view_kw"])
     else:
