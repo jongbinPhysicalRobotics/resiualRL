@@ -78,6 +78,23 @@ def measured_leg_L(m, d, relative: bool = True) -> np.ndarray:
     return L
 
 
+def measured_leg_terms(m, d):
+    """(L_다리 (상대속도), S_r = Σ m_다리 (c − C), S_v = Σ m_다리 (v − v_C)) — 상체 궤도항 계산용 (Q&A 9/24 Q20).
+
+    상체 궤도항 = m_상체 (c_상체 − C) × (v_상체 − v_C) = (S_r × S_v) / m_상체
+    (운동량 보존: m_상체 (c_상체 − C) = −S_r, m_상체 (v_상체 − v_C) = −S_v)."""
+    mujoco.mj_subtreeVel(m, d)
+    C, vC = d.subtree_com[0], d.subtree_linvel[0]
+    L, Sr, Sv = np.zeros(3), np.zeros(3), np.zeros(3)
+    for b in leg_root_body_ids(m):
+        m_leg = float(m.body_subtreemass[b])
+        r, v = d.subtree_com[b] - C, d.subtree_linvel[b] - vC
+        L += d.subtree_angmom[b] + m_leg * np.cross(r, v)
+        Sr += m_leg * r
+        Sv += m_leg * v
+    return L, Sr, Sv
+
+
 def pelvis_omega_world(m, d) -> np.ndarray:
     pel = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "pelvis")
     return d.xmat[pel].reshape(3, 3) @ d.qvel[3:6]
@@ -114,6 +131,14 @@ class LegPointModel:
         r = p_hip[None, :] + self.beta[:, None] * dp[None, :] - C[None, :]
         v = v_hip[None, :] + self.beta[:, None] * dv[None, :] - vC[None, :]
         return (self.mass[:, None] * np.cross(r, v)).sum(0)
+
+    def terms(self, C, vC, p_hip, v_hip, p_foot, v_foot):
+        """(L, Σ m (r − C), Σ m (v − v_C)) — 궤도항용 1 차 모멘트까지 (Q&A 9/24 Q20)."""
+        dp, dv = p_foot - p_hip, v_foot - v_hip
+        r = p_hip[None, :] + self.beta[:, None] * dp[None, :] - C[None, :]
+        v = v_hip[None, :] + self.beta[:, None] * dv[None, :] - vC[None, :]
+        mm = self.mass[:, None]
+        return (mm * np.cross(r, v)).sum(0), (mm * r).sum(0), (mm * v).sum(0)
 
 
 def predict_leg_L_now(models: list[LegPointModel], m, d) -> np.ndarray:

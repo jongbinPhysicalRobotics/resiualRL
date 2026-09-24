@@ -27,6 +27,9 @@ from mpc_srb import FOOT_SITES, rz
 #   MPC 접촉표·스윙 제어·착지점 계획이 전부 "양발 디딤" 으로 따라온다.
 #   이 값을 바꾸거나, 09_walk / 23_walk_affine / 24_walk_split 에 --nogait 를 주면 그 실행만 0 이 된다.
 GAIT_ON = 1
+import os as _os
+if _os.environ.get("GAIT_ON") is not None:   # 환경변수가 있으면 위 파일 값보다 우선 (실험 스크립트용, 9/24).
+    GAIT_ON = int(_os.environ["GAIT_ON"])     # 예: GAIT_ON=1 python ... → 파일 값은 그대로 두고 그 실행만 켬
 
 
 @dataclass

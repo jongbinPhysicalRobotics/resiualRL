@@ -23,6 +23,10 @@
   --affmode full|c|a|off   full(기본): A 블록 + c,  c: 오프셋만,  a: A 블록만,  off: 09_walk 와 동일 (대조군)
   --noanchor  --anchortau 0.1 (앵커 감쇠 시정수 s)  --afffade 0.4 (이 시각부터 아핀항 페이드, 기본 없음)  --noaffw
   --affscale 0.65 (예측 L 배율)  --nodemean (지평 평균 제거 끄기 — 기본은 켬)
+  --orbit              상체 궤도항 m_상체(c_상체−C)×(v_상체−v_C) 까지 넣기 (Q&A 9/24 Q20·Q21). 기본 꺼짐.
+                       정확한 식: ω_골반 = I_상체⁻¹ (L − L_다리 − 궤도항). 없으면 roll 을 1.8 배 과대 예측한다
+                       120 s 결과 (Q21): 섞기 유지 (wxp 0.5) 에선 pitch σ −13~19 % 더 줄지만 약간 뒤로 기움 (−1~−3°).
+                       roll 섞기를 빼면 (wxp 0) roll σ 가 2~2.4 배 — 계획 예측의 roll 이 부정확해서 (상관 0.06~0.22)
 
 1 차 결과 (9/23 Q11, 40 s): 예측 pitch 상관 지평 전체 0.87~0.98.  c 항이 몸을 +7~13° 앞으로 기울였는데
 (예측 L 의 DC = 모델 오차), 지평 평균 제거로 사라짐 — pitch σ 3.35→2.63 (0.5), 4.04→3.10 (0.7),
@@ -194,13 +198,15 @@ class AffineWalk(walk.WalkController):
     """WalkController + AffineMPC + 지평 L_다리 예측.  update_mpc 는 부모 것 그대로 — 예측기는 MPC 가 부른다."""
 
     def __init__(self, m, d, aff_mode="full", aff_anchor=True, aff_w=True,
-                 aff_anchor_tau=0.1, aff_fade=None, aff_scale=1.0, aff_demean=True, **kw):
+                 aff_anchor_tau=0.1, aff_fade=None, aff_scale=1.0, aff_demean=True, aff_orbit=False, **kw):
         super().__init__(m, d, **kw)
         self.aff_scale = float(aff_scale)               # 예측 L 배율 (--check: 계획 예측 RMS 가 실측의 1.4~1.6 배)
         self.aff_demean = bool(aff_demean)              # 지평 평균 제거
         self.aff_anchor_tau = float(aff_anchor_tau)     # 앵커 감쇠 시정수 [s]
         self.aff_fade = None if aff_fade is None else float(aff_fade)   # 이 시각부터 0.2 s 에 걸쳐 아핀항 페이드 [s]
         I_ub, m_ub, _ = lm.upper_body_inertia(m, d)
+        self.m_ub = float(m_ub)
+        self.aff_orbit = bool(aff_orbit)                # 상체 궤도항 (Q20)
         self.I_ub = I_ub
         yaw0 = mpc_srb.quat_to_euler_zyx(d.qpos[3:7])[2]
         self.mpc = AffineMPC(self.params, I_ub, self.w_pel, mode=aff_mode, aff_w=aff_w,
@@ -214,7 +220,7 @@ class AffineWalk(walk.WalkController):
         self.last_anchor = np.zeros(3)
         It, Iu = self.params.I_body, I_ub
         print(f"  [affine] 모드={aff_mode} 앵커={aff_anchor}(τ {self.aff_anchor_tau}) 페이드={self.aff_fade}"
-              f" 배율={self.aff_scale} 평균제거={self.aff_demean} ω̇항={aff_w} α={self.w_pel}"
+              f" 배율={self.aff_scale} 평균제거={self.aff_demean} 궤도항={self.aff_orbit} ω̇항={aff_w} α={self.w_pel}"
               f"  I_ub/I_tot 대각 = {np.diag(Iu) / np.diag(It)}  (상체 {m_ub:.1f} kg)")
 
     def update_mpc(self, d, t):
@@ -247,7 +253,7 @@ class AffineWalk(walk.WalkController):
         """시각 tk 의 계획된 다리 각운동량 (두 다리 합, world, 전신 CoM 기준)."""
         gait, sc = self.gait, self._sc
         Rk = rz(psi_k)
-        L = np.zeros(3)
+        L, Sr, Sv = np.zeros(3), np.zeros(3), np.zeros(3)
         for i in range(2):
             p_hip = Ck + Rk @ o_hip[i]
             v_hip = vCk
@@ -263,7 +269,11 @@ class AffineWalk(walk.WalkController):
                     p1 = self._future_land(i, x0, t)
                 sc.p_liftoff = p0
                 p_foot, v_foot = sc.target(s, p1, gait.T_swing)
-            L += self.legpm[i].L(Ck, vCk, p_hip, v_hip, p_foot, v_foot)
+            Li, Sri, Svi = self.legpm[i].terms(Ck, vCk, p_hip, v_hip, p_foot, v_foot)
+            L += Li; Sr += Sri; Sv += Svi
+        if self.aff_orbit:
+            # 상체 궤도항 (S_r × S_v)/m_상체 를 다리 몫에 합쳐 넣는다 → c 가 −I_상체⁻¹(L_다리 + 궤도항) 이 된다 (Q20)
+            L = L + np.cross(Sr, Sv) / self.m_ub
         return L
 
     def predict_leg_L(self, x0, X_ref, foot_traj, contact):
@@ -284,7 +294,12 @@ class AffineWalk(walk.WalkController):
         if self.aff_anchor:
             # k=0 편차를 지우되 지평을 따라 τ 로 감쇠 — 상수로 더하면 먼 스텝을 오염시킨다 (--check (c))
             L_now_plan = self._plan_L_at(t, C0, vC0, x0[2], x0, t, feet, feet, o_hip)
-            self.last_anchor = lm.measured_leg_L(m, d) - L_now_plan
+            if self.aff_orbit:
+                Lm, Srm, Svm = lm.measured_leg_terms(m, d)
+                L_meas = Lm + np.cross(Srm, Svm) / self.m_ub
+            else:
+                L_meas = lm.measured_leg_L(m, d)
+            self.last_anchor = L_meas - L_now_plan
             L += self.last_anchor[None, :] * np.exp(-(tks - t) / self.aff_anchor_tau)[:, None]
         if self.aff_fade is not None:
             # 먼 지평은 예측이 무너지므로 (--check (c): 0.3 s 너머) 아핀항을 서서히 0 으로
@@ -297,16 +312,16 @@ class AffineWalk(walk.WalkController):
 
 
 # ===========================================================================
-def check(vx, seconds, common, settle=8.0):
+def check(vx, seconds, common, settle=8.0, orbit=False):
     """예측 정확도 — 기본 MPC(--affmode off)로 걷게 하면서 매 틱 예측·실측을 모아 상관을 찍는다."""
     m, d = g1_model.load_torque()
     g1_model.set_crouch(m, d)
     kw = dict(common)
     kw["wz_cmd"] = kw.pop("wz", 0.0)             # headless() 인자명 → 생성자 인자명
-    ctl = AffineWalk(m, d, vx_cmd=vx, aff_mode="off", aff_anchor=False, **kw)
+    ctl = AffineWalk(m, d, vx_cmd=vx, aff_mode="off", aff_anchor=False, aff_demean=False, aff_orbit=orbit, **kw)
     N, DT = ctl.mpc.N, ctl.mpc.dt
     dt = m.opt.timestep
-    rows = dict(t=[], L_rel=[], L_abs=[], L_pm=[], L_pred=[], w_pel=[], w_L=[], yaw=[])
+    rows = dict(t=[], L_rel=[], L_abs=[], L_pm=[], L_pred=[], w_pel=[], w_L=[], yaw=[], L_orb=[])
     z0 = d.qpos[2]
     for k in range(int(seconds / dt)):
         t = k * dt
@@ -317,6 +332,8 @@ def check(vx, seconds, common, settle=8.0):
                 xw = mpc_srb.get_state(m, d, I_body=ctl.params.I_body)    # 순수 전신 ω
                 rows["t"].append(t)
                 rows["L_rel"].append(lm.measured_leg_L(m, d, relative=True))
+                _Lm, _Sr, _Sv = lm.measured_leg_terms(m, d)
+                rows["L_orb"].append(_Lm + np.cross(_Sr, _Sv) / ctl.m_ub)
                 rows["L_abs"].append(lm.measured_leg_L(m, d, relative=False))
                 rows["L_pm"].append(lm.predict_leg_L_now(ctl.legpm, m, d))
                 rows["L_pred"].append(ctl.mpc.last_L.copy())
@@ -353,7 +370,8 @@ def check(vx, seconds, common, settle=8.0):
     I_ub, I_t = ctl.I_ub, ctl.params.I_body
     w_hat = {}
     for name, key in (("실측 L(상대속도)", "L_rel"), ("실측 L(절대속도)", "L_abs"),
-                      ("질점 모델 (지금)", "L_pm"), ("계획 예측 k=0", None)):
+                      ("실측 L + 상체 궤도항", "L_orb"),
+                      ("질점 모델 (지금)", "L_pm"), ("계획 예측 k=0" + (" (+궤도항)" if orbit else ""), None)):
         out = np.zeros((n, 3))
         for j in range(n):
             Rz_ = rz(R["yaw"][j])
@@ -364,8 +382,8 @@ def check(vx, seconds, common, settle=8.0):
     print(f"    {'L 정의':18s} {'roll':>6s} {'pitch':>6s} {'yaw':>6s}     (지금 식 Θ̇=Rᵀω 즉 ω_L 자체: "
           + " ".join(f"{corr(R['w_L'][:, a], R['w_pel'][:, a]):5.2f}" for a in range(3)) + ")")
     for name, out in w_hat.items():
-        print(f"    {name:18s} " + " ".join(f"{corr(out[:, a], R['w_pel'][:, a]):6.2f}" for a in range(3))
-              + f"    RMS 예측/실측 pitch {rms(out[:, 1]) / max(rms(R['w_pel'][:, 1]), 1e-9):.2f}")
+        print(f"    {name:22s} " + " ".join(f"{corr(out[:, a], R['w_pel'][:, a]):6.2f}" for a in range(3))
+              + "    RMS 예측/실측 " + " ".join(f"{rms(out[:, a]) / max(rms(R['w_pel'][:, a]), 1e-9):.2f}" for a in range(3)))
 
     print("\n(c) 지평 k 스텝 앞 예측 vs 그 시각 실측 L_다리 (상대속도) — 상관 (원시 / 앵커 후)")
     tt = R["t"]
@@ -394,14 +412,15 @@ if __name__ == "__main__":
     fade = float(sys.argv[sys.argv.index("--afffade") + 1]) if "--afffade" in sys.argv else None
     ascl = float(sys.argv[sys.argv.index("--affscale") + 1]) if "--affscale" in sys.argv else 1.0
     admn = "--nodemean" not in sys.argv          # 지평 평균 제거 (기본 켬 — 3 차 A/B 에서 앞기울기 제거)
+    orb = "--orbit" in sys.argv                   # 상체 궤도항 (Q20)
     if A["decim"]:
         walk.DECIM = A["decim"]
         print(f"  [실험] MPC 재풀이 {500 / walk.DECIM:.0f} Hz (DECIM={walk.DECIM})")
     if "--check" in sys.argv:
-        check(A["vx"], A["seconds"], A["common"])
+        check(A["vx"], A["seconds"], A["common"], orbit=orb)
         sys.exit(0)
     ctor = functools.partial(AffineWalk, aff_mode=mode, aff_anchor=anchor, aff_w=affw,
-                             aff_anchor_tau=atau, aff_fade=fade, aff_scale=ascl, aff_demean=admn)
+                             aff_anchor_tau=atau, aff_fade=fade, aff_scale=ascl, aff_demean=admn, aff_orbit=orb)
     if A["view"]:
         walk.view(A["vx"], ctor=ctor, **A["common"], **A["view_kw"])
     else:
