@@ -76,7 +76,8 @@ def make_ctor(kw):
         return functools.partial(mod.SplitWalk, our_gains=bool(kw.pop("ourgains", 0.0)),
                                  ref_q=bool(kw.pop("refq", 0.0)), use_jdot=bool(kw.pop("jd", 1.0)),
                                  f_max=kw.pop("fmax", None),
-                                 foot_pd=None if bool(kw.pop("fpd", 1.0)) else mod.OUR_FOOT_PD)
+                                 foot_pd=None if bool(kw.pop("fpd", 1.0)) else mod.OUR_FOOT_PD,
+                                 inertia_live=bool(kw.pop("liveI", 0.0)))
     kw.pop("affmode", None)
     return walk.WalkController
 

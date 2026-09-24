@@ -19,6 +19,8 @@
   --wn3 100 100 100    축별 ω_n [rad/s]        --kd3 20 20 23    축별 kd 고정 [N·s/m]
   --fmax 400           스윙 힘 클램프 (기본 없음)  --ourgains        게인만 우리 것 (ω_n=--wn, kd=2ζω_nΛ, 클램프 400)
   --refq  --refhorizon --nojdot(J̇q̇ 항 끔, 비교용)
+  --liveI              상체 관성을 MPC 풀 때마다 현재 자세로 다시 계산 (reference 방식, Q&A 9/24 Q13).
+                       기본은 시작할 때 웅크린 자세에서 1 회 계산한 값 고정
 """
 from __future__ import annotations
 
@@ -52,7 +54,7 @@ class SplitWalk(up.UpperSRBController):
     W_SRC = "pelvis"
 
     def __init__(self, m, d, wn3=REF_WN3, kd3=REF_KD3, f_max=None, our_gains=False,
-                 ref_q=False, use_jdot=True, foot_pd=None, **kw):
+                 ref_q=False, use_jdot=True, foot_pd=None, inertia_live=False, **kw):
         if ref_q:
             kw = dict(kw)
             kw["q_over"] = {i: w for i, w in enumerate(REF_Q)}
@@ -69,10 +71,23 @@ class SplitWalk(up.UpperSRBController):
         self.use_jdot = use_jdot
         self.foot_pd = foot_pd or REF_FOOT_PD
         self.qdd_max = 300.0                            # 피드포워드 특이자세 보호 (09_walk 와 같은 값)
+        self.inertia_live = bool(inertia_live)          # 상체 관성 매번 재계산 (reference 방식)
+        self.I_fixed = self.params.I_body.copy()        # 시작 자세 값 (비교용)
         gains = (f"ω_n={self.wn_swing} ζ={self.zeta_swing} 클램프 400" if our_gains
                  else f"ω_n={self.wn3} kd={self.kd3} 클램프 {f_max}")
         print(f"  [split] 스윙 = Jᵀ[kp e + kd ė] + JᵀΛ_다리(a − J̇q̇) 다리 블록만, {gains}, "
-              f"J̇q̇={'켬' if use_jdot else '끔'}, refQ={ref_q}, N={self.mpc.N} dt={self.mpc.dt}")
+              f"J̇q̇={'켬' if use_jdot else '끔'}, refQ={ref_q}, N={self.mpc.N} dt={self.mpc.dt}, "
+              f"상체 관성={'매번 재계산' if self.inertia_live else '시작 시 1 회 고정'}")
+
+    # -------------------------------------------------- 100 Hz: MPC — 상체 관성 갱신 (reference 방식)
+    def update_mpc(self, d, t):
+        if self.inertia_live:
+            # reference updateReducedBodyMassPropertiesFromData 와 같은 절차: 다리 서브트리를 뺀 몸체를
+            # 지금 자세 (xipos, ximat) 로 상체 CoM 기준 합성하고 현재 yaw 만 뺀다. reference 는 매 제어 틱에
+            # 계산하지만 MPC 가 이 값을 읽는 건 풀 때뿐이라, 풀 때마다 계산하는 것과 같다.
+            # self.params 는 self.mpc.p 와 같은 객체라 여기서 바꾸면 이번 풀이의 A·B 에 바로 들어간다.
+            self.params.I_body = up.upper_body_inertia(self.m, d)[0]
+        return super().update_mpc(d, t)
 
     # -------------------------------------------------- 500 Hz: 토크 (부모 복사 + 스윙 가지 교체)
     def torque(self, d, t):
@@ -183,6 +198,7 @@ if __name__ == "__main__":
     refq = "--refq" in argv
     nojd = "--nojdot" in argv
     fpd = OUR_FOOT_PD if "--ourfootpd" in argv else None    # 발 자세 PD 를 우리 값(60/5)으로
+    live = "--liveI" in argv                                # 상체 관성 매번 재계산 (reference 방식)
     if "--refhorizon" in argv:
         walk.HORIZON, walk.DT_MPC = REF_HORIZON, REF_DT
         print(f"  [split] 지평 N={walk.HORIZON} dt={walk.DT_MPC} ({walk.HORIZON * walk.DT_MPC:.2f} s, reference)")
@@ -190,7 +206,7 @@ if __name__ == "__main__":
         walk.DECIM = A["decim"]
         print(f"  [실험] MPC 재풀이 {500 / walk.DECIM:.0f} Hz (DECIM={walk.DECIM})")
     ctor = functools.partial(SplitWalk, wn3=wn3, kd3=kd3, f_max=fmax, our_gains=ours,
-                             ref_q=refq, use_jdot=not nojd, foot_pd=fpd)
+                             ref_q=refq, use_jdot=not nojd, foot_pd=fpd, inertia_live=live)
     if A["view"]:
         walk.view(A["vx"], ctor=ctor, **A["common"], **A["view_kw"])
     else:
