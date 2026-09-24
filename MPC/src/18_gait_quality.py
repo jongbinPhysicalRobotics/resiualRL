@@ -60,6 +60,8 @@ def make_ctor(kw):
                                  aff_scale=kw.pop("scale", 1.0), aff_demean=bool(kw.pop("demean", 1.0)))
     if name == "split":
         mod = importlib.import_module("24_walk_split")
+        if bool(kw.pop("refh", 0.0)):                # reference 지평 N=25, dt=0.02 (프로세스별 전역)
+            walk.HORIZON, walk.DT_MPC = mod.REF_HORIZON, mod.REF_DT
         return functools.partial(mod.SplitWalk, our_gains=bool(kw.pop("ourgains", 0.0)),
                                  ref_q=bool(kw.pop("refq", 0.0)), use_jdot=bool(kw.pop("jd", 1.0)),
                                  f_max=kw.pop("fmax", None),
