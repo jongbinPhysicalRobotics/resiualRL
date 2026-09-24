@@ -1,5 +1,8 @@
 # reference/ (ispaik06/convex-mpc-biped) 코드 분석
 
+> ⚠ **2026-09-24 확인**: README 기준 검증 대상은 **MIT 휴머노이드뿐**이고, G1·H1 config 는 "integration starting points ... still need
+> robot-specific fine tuning" 이다. 이 문서의 G1 config 인용값은 검증된 값이 아니다. MIT 와의 차이는 Q&A 9/24 Q3.
+
 > 2026-09-15. https://github.com/ispaik06/convex-mpc-biped 를 `reference/` 에 clone 후 분석.
 > C++17 + MuJoCo + OSQP + Eigen. G1(23dof)/H1/MIT Humanoid 지원.
 > 데모 성능: **전진 0.6 m/s, 횡보행 0.3 m/s, 제자리 회전 1.3 rad/s** — 우리 병목(회전 0.2)의 6.5배.
