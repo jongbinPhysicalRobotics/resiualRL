@@ -142,6 +142,7 @@
 | **`23_walk_affine.py`** | **아핀항 MPC** — 다리 각운동량을 계획된 스윙에서 예측해 SRB 의 Θ̇ 행에 알려진 항으로. `AffineMPC`(solve_gait 복사 + `d`) · `AffineWalk`(예측기). **`--check` 로 예측 정확도부터.** 9/23 Q8·Q11 |
 | **`24_walk_split.py`** | **분리** — 회전만 상체 SRB (11 상속) + reference 스윙 OSC `Jᵀ[kp e+kd ė] + JᵀΛ_다리(a−J̇q̇)` 다리 블록만, ω_n 100 축별·kd 고정·클램프 없음, reference 발자세 PD. `--refq --refhorizon --ourgains`. 9/23 Q9·Q10·Q11 |
 | `leg_momentum.py` | 다리 각운동량 실측(상대속도 정의)·질점 예측 모델 `LegPointModel`. 23 의 재료 |
+| `25_com_vs_feet.py` | 서 있기·걷기에서 발목 중점 / 발바닥 중심 / 전신 CoM / 골반 / 실측 CoP 의 xy 비교. 9/24 Q9 |
 | `walk_cli.py` | 09_walk 플래그 → `headless()/view()` 인자. 23·24 가 권장 구성을 그대로 받게 |
 
 **추천 3개**: `03` → `05` → `10`. 컨트롤러의 세 축(사상·부호·제약)이 잡힌다.

@@ -26,7 +26,7 @@ from mpc_srb import FOOT_SITES, rz
 #   in_stance / swing_phase / contact_table / time_to_touchdown 이 모두 phase() 를 거치므로
 #   MPC 접촉표·스윙 제어·착지점 계획이 전부 "양발 디딤" 으로 따라온다.
 #   이 값을 바꾸거나, 09_walk / 23_walk_affine / 24_walk_split 에 --nogait 를 주면 그 실행만 0 이 된다.
-GAIT_ON = 1
+GAIT_ON = 0
 
 
 @dataclass
