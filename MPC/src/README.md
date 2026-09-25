@@ -7,6 +7,7 @@
 |---|---|---|---|
 | [baseline/](baseline/) | 기존 컨트롤러 + 지금까지의 모든 검증·분석 스크립트 (01 ~ 22, 25) | `09_walk.py` | 현재 권장 구성 |
 | [affine/](affine/) | **아핀항 MPC** — 다리 각운동량을 MPC 에 알려 줌 (Q&A 9/23 Q11, 9/24 Q1·Q30·Q32). 현재 방향: 세 축 모두 전신 ω + `--refshape`. 회전 명령엔 `--swayrot --turnfix` (Q34) | `23_walk_affine.py` | 채택 후보 (렌더 확인 대기) |
+| [mit/](mit/) | **MIT 휴머노이드** — reference C++ 컨트롤러의 Python 이식 (9/25 Q2). 모델 `MPC/models/mit_humanoid/` | `10_walk.py` | 세 목표 120 s (`--profile ramp --fix yawref`) |
 | [split/](split/) | MPC·스윙 분리 — reference 식 스윙 + 상체 SRB (Q&A 9/23 Q11, 9/24 Q2) | `24_walk_split.py` | 보류 |
 
 ```bash
