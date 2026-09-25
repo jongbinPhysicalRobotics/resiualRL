@@ -1,7 +1,63 @@
 # 새 PC 에서 이 저장소 복원하기
 
-저장소에는 **우리가 직접 쓴 것(1.6 MB)만** 들어 있다.
+저장소에는 **우리가 직접 쓴 것만** 들어 있다.
 가상환경과 외부 저장소는 아래 순서로 새로 만든다.
+
+> **2026-09-25 부터 기본 실행 환경은 Ubuntu** (reference C++ 가 Linux/macOS 전용 — termios·POSIX 공유 메모리).
+> 아래 "Ubuntu" 절을 먼저 따르고, 그 뒤의 Windows 절은 예전 기록으로 남긴다.
+
+---
+
+## Ubuntu (24.04 기준)
+
+```bash
+# 0) 시스템 패키지 — 파이썬 venv + reference C++ 빌드 (GLFW 창 포함)
+sudo apt update && sudo apt install -y python3-venv python3-dev git build-essential cmake \
+    curl zip unzip tar pkg-config xorg-dev libxinerama-dev libxcursor-dev libglu1-mesa-dev
+
+# 1) 저장소 + 외부 저장소 3 개 (경로에 한글이 없게 — 예: ~/work/residual-RL)
+git clone https://github.com/jongbinPhysicalRobotics/resiualRL.git ~/work/residual-RL && cd ~/work/residual-RL
+git clone --depth 1 https://github.com/google-deepmind/mujoco_menagerie.git
+git clone --depth 1 https://github.com/ispaik06/convex-mpc-biped.git reference
+git clone --depth 1 https://github.com/unitreerobotics/unitree_rl_gym.git "deployed RL/unitree_rl_gym"
+
+# 2) 파이썬 — Windows 에서 쓰던 버전 그대로 (requirements.txt). Ubuntu 24.04 기본은 3.12:
+#    고정 버전이 3.12 용 휠이 없으면 python3.13 (deadsnakes PPA) 으로 venv 를 만든다.
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu   # GPU 머신이면 cu 빌드
+
+# 3) 동작 확인 (Windows 의 .venv/Scripts/python.exe 대신 .venv/bin/python, PYTHONIOENCODING 은 필요 없다)
+.venv/bin/python MPC/src/mit/02_unit_checks_A.py
+.venv/bin/python MPC/src/mit/10_walk.py --vx 0.6 --profile ramp --fix yawref --seconds 20
+GAIT_ON=1 .venv/bin/python MPC/src/affine/18_gait_quality.py --seconds 120 --vx 0.5 0.7 \
+    --var "tds=1.25,copm=0.9,wzp=1,wxp=0,ctl=affine,refshape=1"
+```
+
+### reference (C++) 빌드 — MIT 이식 검증용 (Q&A 9/25 Q4)
+
+```bash
+# vcpkg (Eigen, glfw3, nlohmann-json, osqp, osqp-eigen, yaml-cpp 를 받아 온다)
+mkdir -p ~/.local && cd ~/.local && git clone https://github.com/microsoft/vcpkg.git && ./vcpkg/bootstrap-vcpkg.sh
+echo 'export VCPKG_ROOT="$HOME/.local/vcpkg"' >> ~/.bashrc && source ~/.bashrc
+# MuJoCo 소스 빌드 → ~/.local/mujoco  (reference CMakePresets 가 $HOME/.local/mujoco/lib/cmake/mujoco 를 찾는다)
+cd ~ && git clone https://github.com/google-deepmind/mujoco.git && cd mujoco
+cmake -S . -B build -DCMAKE_INSTALL_PREFIX="$HOME/.local/mujoco" && cmake --build build -j && cmake --install build
+# reference
+cd ~/work/residual-RL/reference && cmake --preset dev && cmake --build --preset dev -j
+./build/apps/main g y          # G1 + 뷰어. 키는 뷰어 창이 아니라 이 터미널에 (w/s a/d q/e, space)
+```
+
+### 옮긴 뒤 확인할 것
+- **수치 재기준**: MuJoCo·BLAS 빌드가 달라 부동소수점이 조금씩 다르고, 보행은 혼돈적이라 생존 시간 같은 수치가 바뀔 수 있다.
+  Q&A 의 표를 인용하기 전에 대표 표 몇 개 (위 3) 의 18 번 표, `MPC/src/mit/11_gait_quality.py` 세 목표) 를 Ubuntu 에서 다시 돌려 기준을 새로 잡는다.
+- **Claude Code 작업 규칙**: 저장소 최상위 `CLAUDE.md` 에 옮겨 두었다 (Windows 쪽 메모리는 그 PC 에만 있다).
+- GPU 가 있는 머신이면 `nvidia-smi` 로 확인 — IsaacGym/MJX 계열은 Windows 노트북에선 못 썼다.
+
+---
+
+## Windows (2026-09-25 까지 쓰던 환경 — 기록)
 
 > ## ⚠ 폴더 위치: **영문 경로**에 둘 것
 > MuJoCo 와 torch 의 C 레벨 파일 열기가 **경로의 한글을 못 읽는다.**

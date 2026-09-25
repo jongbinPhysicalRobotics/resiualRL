@@ -10,7 +10,7 @@ import numpy as np
 import mujoco
 
 np.set_printoptions(precision=6, suppress=True, linewidth=150)
-MJCF_DIR = Path(r"C:\Users\백종빈\Desktop\4-2\residual RL\mit_humanoid_mjcf")
+MJCF_DIR = Path(__file__).resolve().parents[4] / "mit_humanoid_mjcf"   # specs → mit → src → MPC → 최상위
 assets = {f.name: f.read_bytes() for f in MJCF_DIR.rglob("*") if f.is_file()}
 robot_xml = (MJCF_DIR / "mit_humanoid.xml").read_text(encoding="utf-8")
 scene_xml = (MJCF_DIR / "scene.xml").read_text(encoding="utf-8")

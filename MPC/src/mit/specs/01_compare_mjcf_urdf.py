@@ -23,11 +23,12 @@ import numpy as np
 
 np.set_printoptions(precision=6, suppress=True, linewidth=150)
 
-ROOT = Path(r"C:\Users\백종빈\Desktop\4-2\residual RL")
-MJCF_DIR = ROOT / "mit_humanoid_mjcf"
+ROOT = Path(__file__).resolve().parents[4]              # specs → mit → src → MPC → 프로젝트 최상위
+MJCF_DIR = ROOT / "mit_humanoid_mjcf"                    # 받은 원본 변환본 (저장소에 포함)
 URDF_PATH = MJCF_DIR / "urdf_source" / "humanoid_full_sf.urdf"
-OTHER_URDF = Path(r"C:\Users\백종빈\AppData\Local\Temp\claude\c--Users-----Desktop-4-2-residual-RL"
-                  r"\f1264b30-f875-470c-b3e4-932e1790840d\scratchpad\mit_humanoid_fixed_arms.urdf")
+# 4 절 교차 확인용 — se-hwan/pbrs-humanoid (dev) resources/robots/mit_humanoid/mit_humanoid_fixed_arms.urdf.
+# 저장소에 없다. 받아서 MJCF_DIR 에 두면 4 절이 돈다 (없으면 건너뜀).
+OTHER_URDF = MJCF_DIR / "mit_humanoid_fixed_arms.urdf"
 
 # reference/config/mit_humanoid/my_controller.yaml : initial_pose
 YAML_BASE_Z = 0.679472
@@ -491,6 +492,9 @@ for bn in ("left_foot", "right_foot"):
 # 4. cross-check with pbrs-humanoid fixed-arms URDF
 # ---------------------------------------------------------------------------
 print("\n=== 4. CROSS-CHECK vs mit_humanoid_fixed_arms.urdf (pbrs-humanoid) ===")
+if not OTHER_URDF.exists():
+    print(f"skip: {OTHER_URDF} 없음 (위 주석의 URL 에서 받으면 된다)")
+    raise SystemExit(0)
 other = ET.fromstring(OTHER_URDF.read_text(encoding="utf-8"))
 other_mass = {}
 for link in other.findall("link"):

@@ -1,17 +1,3 @@
-"""Wrench MPC — 제약 조립(층1) + condensed QP + 솔버(층2).
-
-QP (Di Carlo condensed formulation):
-    X = A_qp x0 + B_qp U
-    min_U  ½ Uᵀ H U + gᵀ U
-      H = 2 (B_qpᵀ Q̄ B_qp + R̄)
-      g = 2 B_qpᵀ Q̄ (A_qp x0 − X_ref)
-    s.t.  C U ≤ d      (마찰콘 + Fz 범위 + CoP 모멘트, 발당 10행 × 2발 × N)
-
-솔버: quadprog (Goldfarb–Idnani active-set, 고정밀 — 명세 9절 "quadprog 계열")
-      → 실패 시 OSQP (ADMM) 폴백.
-      ⚠ CasADi conic(qpOASES 등)은 한글 경로에서 플러그인 DLL 로딩 실패(WIN32 126)로
-        사용 불가. CasADi 는 심볼릭 자동미분(Step 3 검증)에만 사용한다.
-"""
 from __future__ import annotations
 
 import time
@@ -24,26 +10,9 @@ from mpc_srb import (NX, NU, NU_PER_FOOT, N_FEET, FOOT_SITES, SRBParams,
                      continuous_AB, discretize)
 
 
-# ---------------------------------------------------------------------------
-# 제약 (발 하나, 명세 3절 C_foot 10행)
-# ---------------------------------------------------------------------------
+#제약조건
 def foot_constraints(p: SRBParams, psi: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
-    """C_foot(18x6), d_foot(18):  C·W ≤ d,  W = [Fx,Fy,Fz,mx,my,mz] (world frame).
 
-    CoP 제약의 h 결합항 (검증 리포트 §1에서 잡은 버그):
-      wrench W 는 발 site(발목 원점)에서 정의되지만 CoP 조건은 발바닥 접촉면
-      (site 아래 h_sole=0.035 m)의 wrench 에 대한 것. 지면 wrench 로 옮기면
-        m_ground,y = my + h·Fx,   m_ground,x = mx − h·Fy
-      이므로 수평력이 h 팔길이로 CoP 를 이동시킨다. 크기: |Fx|=μFz 에서
-      h·μ = 0.021·Fz — 롤 마진(0.025·Fz)의 84%, 뒤꿈치 마진(0.05·Fz)의 42%.
-      이 항이 없으면 가속 중(Fx>0) MPC 가 뒤꿈치 권한을 과대평가 → 후방 전도.
-      서 있기(Fx≈0)에선 0 이라 Step 1 검증에 안 잡혔던 것.
-
-    psi: 발/제약은 yaw frame 에서 정의되므로 world wrench 를 Rzᵀ 로 돌려 적용
-      (yaw≈0 이면 항등 — 요 회전 대비 잠복 버그 수정, 리포트 §1).
-    ⚠ body yaw 가정 (2라운드 §1-c): hip-yaw 사용·toe-out 이 생기면 발마다 실제
-      site 회전(d.site_xmat)을 써야 정확. 평지 직진에선 무해. 회전 보행 전 교체.
-    """
     mu, w, lt, lh, h = p.mu, p.w, p.l_t, p.l_h, p.h_sole
     C = np.array([
         [1,  0, -mu,  0,  0, 0],    # Fx ≤ μFz
@@ -57,14 +26,7 @@ def foot_constraints(p: SRBParams, psi: float = 0.0) -> tuple[np.ndarray, np.nda
         [h,  0, -lh,  0,  1, 0],    # my + h·Fx ≤ l_h·Fz  (피치 CoP, 뒤꿈치)
         [-h, 0, -lt,  0, -1, 0],    # −my − h·Fx ≤ l_t·Fz (피치 CoP, 발가락)
     ], dtype=float)
-    # --- mz (요 모멘트) 제약: Caron 사각 접촉 CWC 정확식 (ICRA'15) 8행 ---
-    # 처음엔 OA-MPC 식(12)의 선(heel-toe) 접촉 버전을 넣었으나, 그 모델은 횡력
-    # Fy 를 뒤꿈치/발가락 fz 배분에 묶어 sway 용 Fy 를 과하게 조였고(활성률
-    # 42~45%) 직진 보행이 무너졌다. 사각 발의 정확식으로 교체 — LP 피지빌리티
-    # 3000샘플 100% 일치로 부호 검증함 (18.5절).
-    #   중심(사각 중앙, 발목 아래 h) 기준: X=(lt+lh)/2, Y=w, x_c=(lt−lh)/2
-    #   τx=mx−h·Fy, τy=my+h·Fx+x_c·Fz, τz=mz−x_c·Fy
-    #   τz ≤ μ(X+Y)Fz − |Y·Fx + μτx| − |X·Fy + μτy|   (하한은 대칭형)
+
     Xr, Yr, xc = (lt + lh) / 2.0, w, (lt - lh) / 2.0
     fx_r = np.array([1., 0, 0, 0, 0, 0]); fy_r = np.array([0., 1, 0, 0, 0, 0])
     fz_r = np.array([0., 0, 1, 0, 0, 0])
@@ -89,33 +51,22 @@ def foot_constraints(p: SRBParams, psi: float = 0.0) -> tuple[np.ndarray, np.nda
     return C, d
 
 
-# ---------------------------------------------------------------------------
-# MPC 본체
-# ---------------------------------------------------------------------------
-# 기본 가중치 (임의 초기값 — 사용자가 튜닝 예정. Di Carlo Table I 스케일 참고)
-#   x = [roll,pitch,yaw, px,py,pz, wx,wy,wz, vx,vy,vz, g]
-# Step4 디버깅: Q_Θ=300/Q_ω=5 는 자세 루프가 과소감쇠 → 50Hz 업데이트에서 진동 발산.
-# 자세 강성을 낮추고 각속도 감쇠를 올려 안정화. (튜닝 여지 큼 — 사용자 몫)
-# LQR 근사 추정으로 자세 루프 대역폭 ~2Hz 가 되게 낮춤 (Q_Θ=100 은 ~6Hz → 100Hz
-# 샘플링/실현 지연에서 위상여유 부족, push 후 bang-bang 발산 — Step4 디버깅 2차)
+# mpc 본체
+# COST
 Q_DEFAULT = np.array([10, 10, 20,   50, 50, 300,   5, 5, 5,   20, 20, 50,   0],
                      dtype=float)
-# R: 힘(N)과 모멘트(N·m) 스케일 분리 (명세 7절 — 균일 금지)
+
 R_FORCE = 1e-5
-R_MOMENT = 1e-5   # 힘과 동일. 1e-3 으로 크게 두면 QP가 my 대신 Fx로 피치를 만들어 전진해버림 (Step2 디버깅)
+R_MOMENT = 1e-5  
 R_DEFAULT = np.tile(np.array([R_FORCE] * 3 + [R_MOMENT] * 3), N_FEET)
 
 
 class WrenchMPC:
-    """시간지평 N 의 wrench MPC. N=1 이면 1스텝 QP (Step 2)."""
+
 
     def __init__(self, params: SRBParams, horizon: int = 10, dt: float = 0.02,
                  q_diag=None, r_diag=None, psi0: float = 0.0, du_w=None):
         self.p = params
-        # Δu 벌점 (Q&A 9/22): Σ_k (u_k − u_{k−1})ᵀ W (u_k − u_{k−1}),  u_{−1} = 직전 적용값.
-        # R 이 1e-5 라 해가 제약 꼭짓점에서 꼭짓점으로 튄다 (9/21 Q8: 반대발 이탈 순간
-        # CoP 명령 +12 → −5 cm). 지평 안 이웃 스텝 차이에도 걸리므로 이탈 예정 발의
-        # 하중을 미리 줄이는 효과(= 이탈 램프)도 있다. None 이면 기존과 동일.
         self.du_w = None if du_w is None else np.asarray(du_w, float)
         self.u_prev = None
         self.N = horizon
@@ -124,7 +75,6 @@ class WrenchMPC:
         self.R = np.diag(R_DEFAULT if r_diag is None else np.asarray(r_diag, float))
         self.Q_bar = np.kron(np.eye(self.N), self.Q)
         self.R_bar = np.kron(np.eye(self.N), self.R)
-        # 대각 벡터 (solve_gait 가속, Q&A 9/22 Q6) — Q·R 은 대각이라 조밀 곱이 필요 없다
         self.q_bar = np.tile(np.diag(self.Q), self.N)
         self.r_bar = np.tile(np.diag(self.R), self.N)
 
@@ -166,19 +116,7 @@ class WrenchMPC:
 
     def solve(self, x0: np.ndarray, x_ref: np.ndarray, psi: float,
               r_feet: np.ndarray, u_ref: np.ndarray | None = None):
-        """한 번 풀기.
 
-        x0    : 현재 상태 (13,)
-        x_ref : 참조 — (13,) 이면 전 구간 동일, (N,13) 이면 스텝별
-        psi   : yaw (선형화 기준)
-        r_feet: (2,3) 발 site − CoM (world). 지평 내내 고정 (서 있기 가정)
-        u_ref : 입력 정규화 기준 (12,). None 이면 0.
-                ⚠ u_ref=0 이면 R 이 중력과 싸워 Fz 가 Mg 보다 작아진다
-                (N=1, R_F=1e-5 에서 22% 부족 → 가라앉음, Step 2 디버깅에서 확인).
-                중력 ff(gravity_u_ref)를 주면 R 은 '기준에서 벗어남'만 벌점.
-
-        Returns: (u0(12,), U(12N,), info dict)
-        """
         t0 = time.perf_counter()
         Ac, Bc = continuous_AB(self.p, psi, r_feet)
         Ad, Bd = discretize(Ac, Bc, self.dt)
