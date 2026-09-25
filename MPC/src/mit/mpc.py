@@ -425,6 +425,8 @@ class ConvexMPC:
 
         # reference 명시 5개 (ConvexMPC.cpp:1024-1028) + 1.x 보정 (spec 02 §10.1) + 0.6 기본값 명시.
         # rho 는 넘기지 않는다: 1.1.3 기본 0.1 과 같고, 넘기면 setup 뒤 update_rho 로 KKT 를 한 번 더 분해한다.
+        # ⚠ Q&A 9/25 Q11: reference 실효값은 adaptive_rho_interval 50 · check_dualgap 1 (OSQP 1.x 기본). 아래 100 / 0 은
+        #   '0.6.x' 추론에서 온 값으로 첫 풀이부터 u0 가 ~20 N 다르다. 변형 키 rhoint=50,dualgap=1 로 맞춘다 (기본은 유지).
         self.settings = dict(verbose=False, warm_starting=True, polishing=False, max_iter=200,
                              adaptive_rho=1, adaptive_rho_interval=100, check_dualgap=0,
                              eps_abs=1e-3, eps_rel=1e-3, eps_prim_inf=1e-4, eps_dual_inf=1e-4,
