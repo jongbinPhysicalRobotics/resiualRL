@@ -50,9 +50,9 @@ D5 python osqp 1.1.3 (reference 는 OsqpEigen / osqp 0.6.x).
 **특이점 고침 (변형, 기본 꺼짐)** — `fixes`:
 - `yawref` — walking 에서 MPC yaw 참조를 측정 yaw 대신 body target yaw (명령 적분) 로. **이것 하나로 세 목표가 120 s 를 넘는다.**
   reference 는 walking 에서 yaw 를 측정값으로 매번 다시 잡아 방향 되먹임이 없다 (서기 모드는 body target 을 쓴다).
-  헤드리스에선 아무도 방향을 바로잡지 않으니 yaw 가 흘러가고 착지점 계획 (명령 적분 yaw) 과 몸 방향이 갈라져 넘어진다.
-  reference 데모는 키보드로 사람이 몰았다.
-- `slide` — 지평 접촉표를 cycle 원점이 아니라 지금부터. 혼자 쓰면 매 풀이 cold start 라 OSQP 200 회 상한에서 나빠진다.
+  헤드리스에선 yaw 가 흘러가고 착지점 계획 (명령 적분 yaw) 과 몸 방향이 갈라져 넘어진다 (측정).
+  reference 데모는 GUI 세션이고 횡·회전은 공개 코드상 키보드로만 낼 수 있다 (추론). 사람이 방향을 바로잡았는지는 모른다 (Q&A 9/25 Q3).
+- `slide` — 지평 접촉표를 cycle 원점이 아니라 지금부터. 혼자 쓰면 접촉 패턴이 매 풀이 바뀌어 cold start (비율 0.9 이상) 라 OSQP 200 회 상한에서 나빠진다.
   정확한 풀이 (`maxit=4000` 또는 `solver=quadprog`) 와 같이 쓸 때만 조금 낫다.
 - `yawanchor` — 계획 yaw 를 측정 yaw 로 (방향 유지 없이 흘러가는 대로). 전진·회전은 넘어진다.
 
