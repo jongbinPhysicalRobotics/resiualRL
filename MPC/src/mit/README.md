@@ -4,23 +4,24 @@ reference (`reference/`, ispaik06/convex-mpc-biped, C++) 의 convex MPC 보행 �
 MIT 휴머노이드 모델 (`MPC/models/mit_humanoid/`) 에서 reference 데모 수치 (전진 0.6 m/s · 횡 0.3 m/s · 제자리 회전 1.3 rad/s)
 를 120 s 로 재현해 보는 폴더. 이 폴더 파일만으로 실행된다 (G1 폴더들과 코드 공유 없음). 경위·결과는 [Q&A 9/25 Q2](../../../Q&A/2026-09-25.md).
 
-## 실행 (Git Bash, 프로젝트 루트)
+## 실행 (프로젝트 루트, Ubuntu — HiDPI Wayland 뷰어는 앞에 `PYGLFW_LIBRARY_VARIANT=x11`)
 
 ```bash
 # 보기 (뷰어) — 지금 세 목표를 120 s 넘기는 구성: 명령 램프 + 방향 유지 (yawref)
-.venv/Scripts/python.exe MPC/src/mit/10_walk.py --view --vx 0.6 --profile ramp --fix yawref
-.venv/Scripts/python.exe MPC/src/mit/10_walk.py --view --vy 0.3 --profile ramp --fix yawref
-.venv/Scripts/python.exe MPC/src/mit/10_walk.py --view --wz 1.3 --profile ramp --fix yawref
+.venv/bin/python MPC/src/mit/10_walk.py --view --vx 0.6 --profile ramp --fix yawref
+.venv/bin/python MPC/src/mit/10_walk.py --view --vy 0.3 --profile ramp --fix yawref
+.venv/bin/python MPC/src/mit/10_walk.py --view --wz 1.3 --profile ramp --fix yawref
 # 충실한 이식 그대로 (reference 헤드리스 기본: 명령이 처음부터 있음) — 세 목표 모두 수 초 안에 넘어진다
-.venv/Scripts/python.exe MPC/src/mit/10_walk.py --view --vx 0.6
+.venv/bin/python MPC/src/mit/10_walk.py --view --vx 0.6
 # 헤드리스 1 개 (요약 출력, --log 면 MPC/logs/mit_walk_*.npz)
-PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe MPC/src/mit/10_walk.py --vx 0.6 --profile ramp --fix yawref --seconds 120
+.venv/bin/python MPC/src/mit/10_walk.py --vx 0.6 --profile ramp --fix yawref --seconds 120
 # 표 (Pool, 18 코어)
-PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe MPC/src/mit/11_gait_quality.py --cmd 0.6,0,0 0,0.3,0 0,0,1.3 \
+.venv/bin/python MPC/src/mit/11_gait_quality.py --cmd 0.6,0,0 0,0.3,0 0,0,1.3 \
     --var base "profile=ramp,fix=yawref" --seconds 120 --md
 ```
 변형 키 (`--var "k=v,k=v"`): `profile=const|step|ramp`, `fix=slide+yawref+yawanchor`, `solver=quadprog`, `noarm`,
-`markers`, `mu=0.8`, `rhoint=50`, `maxit=4000`, `eps=1e-4`, `fsm2=0`. 검사: `01_check_model.py`, `02_unit_checks_{A,B,C}.py`, `03_integration_smoke.py`.
+`markers`, `mu=0.8`, `rhoint=50`, `maxit=4000`, `eps=1e-4`, `fsm2=0`, `xmax=1.0` (명령 필터 전진 상한, 기본 0.7 — Q&A 9/25 Q10),
+`dualgap=1` (OSQP check_dualgap). **reference 실효 OSQP 설정 = `rhoint=50,dualgap=1`** (이식 기본 100 / 0 은 reference 와 다르다 — Q&A 9/25 Q11). 검사: `01_check_model.py`, `02_unit_checks_{A,B,C}.py`, `03_integration_smoke.py`.
 
 ## 파일
 
@@ -36,6 +37,8 @@ PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe MPC/src/mit/11_gait_quality.py -
 | `leg_control.py` | stance Jᵀ wrench, 스윙 OSC (Kp = ω²·diag Λ), 발 자세, stance yaw hold, 서기 6×10 Jacobian, 팔 PD |
 | `controller.py` | `runController` 17 단계 순서 그대로 + 변형 `fixes` |
 | `10_walk.py` · `11_gait_quality.py` | 실행기 (헤드리스 / 뷰어) · 변형 표 |
+| `12_ref_diff.py` | reference C++ 실행 ↔ 이 이식 차분 검증 (모델 복사·reference 패치·스냅샷 비교·궤적 비교·생존 표, Q&A 9/25 Q11) |
+| `13_leg_inertia.py` · `14_srb_validity.py` | 다리 스윙 관성 MIT vs G1 · 걷는 중 SRB 가정 측정 (Q&A 9/25 Q9) |
 | `specs/` | 이식의 근거 문서 — reference C++ 에서 뽑아 적대적 검증을 거친 명세 01~06, 설계 07 |
 
 ## reference 와 다른 점

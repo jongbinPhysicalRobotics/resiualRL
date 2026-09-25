@@ -91,6 +91,10 @@ def parse_variant(s: str | None) -> dict:
             kw["fsm_double_update"] = bool(int(v))
         elif k == "fix":                           # reference 특이점 고침 (controller.py fixes): fix=slide+yawref
             kw["fixes"] = tuple(x for x in v.split("+") if x)
+        elif k == "dualgap":                       # OSQP check_dualgap (이식 0, reference 실효 1 — Q&A 9/25 Q11)
+            kw.setdefault("osqp_settings", {})["check_dualgap"] = int(v)
+        elif k == "xmax":                          # 명령 필터 전진 상한 (reference 0.7) — 1 m/s 시험 (Q&A 9/25 Q9)
+            kw["x_dot_max"] = float(v)
         else:
             raise KeyError(f"unknown variant key {k!r}")
     return kw
@@ -339,8 +343,12 @@ def _tag(vx, vy, wz, variant):
 
 
 def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale, fsm_double_update, verbose,
-           osqp_settings=None, fixes=()):
+           osqp_settings=None, fixes=(), x_dot_max=None):
     cfg = config.load()
+    if x_dot_max is not None:                     # 명령 필터 전진 상한 변형 (기본 = yaml 0.7)
+        raw = cfg.to_dict()
+        raw["user_command_filter"]["x_dot_max"] = float(x_dot_max)
+        cfg = config.MitConfig(raw)
     model = MitModel(armature=armature, emulate_debug_markers=markers)
     model.reset(str(cfg.port.spawn_keyframe))
     walk_t = float(cfg.startup.post_init_standing_settle_time)
@@ -361,10 +369,11 @@ def _fell(d) -> bool:
 
 def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True, profile="const",
              markers=False, stand=False, friction_scale=1.0, fsm_double_update=True, osqp_settings=None, log=False,
-             variant=None, verbose=True, print_every=10.0, keep_record=False, fixes=()):
+             variant=None, verbose=True, print_every=10.0, keep_record=False, fixes=(), x_dot_max=None):
     """walking seconds 동안 (시뮬 = settle + seconds). 반환 dict (metrics + fell 등)."""
     cfg, model, ctl, walk_t = _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale,
-                                     fsm_double_update, verbose=False, osqp_settings=osqp_settings, fixes=fixes)
+                                     fsm_double_update, verbose=False, osqp_settings=osqp_settings, fixes=fixes,
+                                     x_dot_max=x_dot_max)
     m, d = model.m, model.d
     total = (0.0 if stand else walk_t) + seconds
     n = int(round(total / m.opt.timestep))
@@ -436,11 +445,11 @@ def print_summary(r: dict):
 
 # ----------------------------------------------------------------------------------------------------------------
 def view(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True, profile="const", markers=False,
-         stand=False, friction_scale=1.0, fsm_double_update=True, follow=True, fixes=()):
+         stand=False, friction_scale=1.0, fsm_double_update=True, follow=True, fixes=(), x_dot_max=None):
     import threading
     import mujoco.viewer
     cfg, model, ctl, walk_t = _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale,
-                                     fsm_double_update, verbose=True, fixes=fixes)
+                                     fsm_double_update, verbose=True, fixes=fixes, x_dot_max=x_dot_max)
     m, d = model.m, model.d
     total = (0.0 if stand else walk_t) + seconds
     sync_every = 17
@@ -492,9 +501,11 @@ def main():
     ap.add_argument("--log", action="store_true")
     ap.add_argument("--variant", default=None)
     ap.add_argument("--fix", default="", help="reference 특이점 고침 (변형): slide, yawref, yawanchor 를 + 로 연결")
+    ap.add_argument("--xmax", type=float, default=None, help="명령 필터 전진 상한 [m/s] (기본 yaml 0.7)")
     a = ap.parse_args()
     kw = dict(solver=a.solver, armature=not a.noarmature, profile=a.profile, markers=a.markers, stand=a.stand,
-              friction_scale=a.mu, fsm_double_update=not a.fsm1, fixes=tuple(x for x in a.fix.split("+") if x))
+              friction_scale=a.mu, fsm_double_update=not a.fsm1, fixes=tuple(x for x in a.fix.split("+") if x),
+              x_dot_max=a.xmax)
     if a.view:
         view(a.vx, a.vy, a.wz, a.seconds, **kw)
         return
