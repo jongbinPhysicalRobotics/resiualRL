@@ -801,7 +801,10 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
     if boost:
         from viewer_hud import boost_process
         print(f"  프로세스 부스트 (우선순위 높음 + 스로틀링 끔): {boost_process()}")
+    import threading
+    before = set(threading.enumerate())
     with mujoco.viewer.launch_passive(m, d) as v:
+        ui_threads = [t for t in threading.enumerate() if t not in before]
         hud = ViewerHUD(m, vx)
         wall0 = _time.perf_counter()
         if follow:
@@ -854,6 +857,10 @@ def view(vx=0.0, kp_up=60.0, swing_id=False, wz=0.0, yaw_hold=True, ctor=None,
                 w_prev = pc()
             if max_sim is not None and k * m.opt.timestep >= max_sim:
                 break
+    # close() 는 종료 요청만 한다. 뷰어 스레드가 끝나기 전에 인터프리터가 내려가면
+    # glfw.terminate 와 render_loop 가 겹쳐 segfault (Ubuntu, MuJoCo 3.12) → 스레드 종료를 기다린다.
+    for t in ui_threads:
+        t.join(timeout=5.0)
     if timelog:
         np.savez(timelog, tl=np.array(tl), cols=np.array(["t", "wall", "wall_total"] + list(acc.keys()) + ["bench"]),
                  vx=vx, realtime=realtime)

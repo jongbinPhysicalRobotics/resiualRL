@@ -5,7 +5,7 @@
 
 ## 작업 범위
 - 이 저장소 폴더 안에서만 작업한다 (사용자가 권한을 모두 준 대신 조건으로 건 것).
-- 커밋·푸시는 Q&A 한 항목을 쓸 때마다 한다 (지금까지의 관례).
+- 커밋은 Q&A 한 항목을 쓸 때마다 한다 (지금까지의 관례). **푸시는 사용자가 요청할 때만** (2026-09-25 부터).
 
 ## 기록
 - 개념 설명·실험 결과는 `Q&A/<YYYY-MM-DD>.md` 에 Q 번호로 쌓고 `Q&A/README.md` 색인에 한 줄 추가한다.
@@ -35,5 +35,6 @@
 ## 환경
 - Ubuntu: `.venv/bin/python`, `requirements.txt` (SETUP.md). Windows 에서 쓰던 `PYTHONIOENCODING=utf-8` · 한글 경로 VFS 우회는 Ubuntu 에선 필요 없다
   (VFS 로더는 그대로 둬도 동작한다).
+- 뷰어: HiDPI Wayland 에선 `PYGLFW_LIBRARY_VARIANT=x11` 을 붙인다 (Q&A 9/25 Q7). 뷰어 코드는 닫은 뒤 뷰어 스레드를 join 해야 종료 segfault 가 없다.
 - 병렬 실행은 `multiprocessing.Pool`. MIT 폴더는 BLAS 스레드를 1 로 고정해야 빠르다 (`OPENBLAS_NUM_THREADS=1`, 러너가 설정).
 - 옮긴 직후 대표 표를 다시 돌려 수치 기준을 새로 잡는다 (SETUP.md "옮긴 뒤 확인할 것").

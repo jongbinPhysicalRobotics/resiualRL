@@ -107,11 +107,18 @@ def view(kp=0.0, kd=0.0):
 
     print("뷰어: tau = g - J^T f 로 서 있습니다. 창을 닫으면 종료.")
     print("  (뷰어에서 Ctrl+마우스 우클릭 드래그로 밀어볼 수 있습니다)")
+    import threading
+    before = set(threading.enumerate())
     with mujoco.viewer.launch_passive(m, d) as v:
+        ui_threads = [t for t in threading.enumerate() if t not in before]
         while v.is_running():
             d.ctrl[:] = ctl(m, d)
             mujoco.mj_step(m, d)
             v.sync()
+    # close() 는 종료 요청만 한다. 뷰어 스레드가 끝나기 전에 인터프리터가 내려가면
+    # glfw.terminate 와 render_loop 가 겹쳐 segfault (Ubuntu, MuJoCo 3.12) → 스레드 종료를 기다린다.
+    for t in ui_threads:
+        t.join(timeout=5.0)
 
 
 if __name__ == "__main__":

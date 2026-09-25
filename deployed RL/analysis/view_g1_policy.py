@@ -44,7 +44,10 @@ _R0 = d.xmat[PEL].reshape(3, 3)
 yaw0 = np.arctan2(_R0[1, 0], _R0[0, 0])
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "MPC/src/baseline"))
 from viewer_hud import ViewerHUD      # MPC 뷰어와 같은 표시 (sim/실제 시간·속도)
+import threading
+before = set(threading.enumerate())
 with mujoco.viewer.launch_passive(m, d) as viewer:
+    ui_threads = [t for t in threading.enumerate() if t not in before]
     hud = ViewerHUD(m, a.vx)
     start = time.time()
     while viewer.is_running() and time.time() - start < a.seconds:
@@ -74,4 +77,8 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
         rest = dt - (time.time() - t0)
         if rest > 0:
             time.sleep(rest)
+# close() 는 종료 요청만 한다. 뷰어 스레드가 끝나기 전에 인터프리터가 내려가면
+# glfw.terminate 와 render_loop 가 겹쳐 segfault (Ubuntu, MuJoCo 3.12) → 스레드 종료를 기다린다.
+for t in ui_threads:
+    t.join(timeout=5.0)
 print("종료")

@@ -437,13 +437,16 @@ def print_summary(r: dict):
 # ----------------------------------------------------------------------------------------------------------------
 def view(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True, profile="const", markers=False,
          stand=False, friction_scale=1.0, fsm_double_update=True, follow=True, fixes=()):
+    import threading
     import mujoco.viewer
     cfg, model, ctl, walk_t = _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale,
                                      fsm_double_update, verbose=True, fixes=fixes)
     m, d = model.m, model.d
     total = (0.0 if stand else walk_t) + seconds
     sync_every = 17
+    before = set(threading.enumerate())
     with mujoco.viewer.launch_passive(m, d) as v:
+        ui_threads = [t for t in threading.enumerate() if t not in before]
         if follow:
             v.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
             v.cam.trackbodyid = model.base_body
@@ -466,6 +469,10 @@ def view(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True,
                 if lag > 0:
                     time.sleep(lag)
         time.sleep(1.0)
+    # close() 는 종료 요청만 한다. 뷰어 스레드가 끝나기 전에 인터프리터가 내려가면
+    # glfw.terminate 와 render_loop 가 겹쳐 segfault (Ubuntu, MuJoCo 3.12) → 스레드 종료를 기다린다.
+    for t in ui_threads:
+        t.join(timeout=5.0)
 
 
 def main():

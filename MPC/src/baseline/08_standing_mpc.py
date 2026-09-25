@@ -143,7 +143,10 @@ def view():
     print(f"뷰어: N={HORIZON} wrench MPC. Ctrl+우클릭 드래그로 밀어보세요.")
     wr = np.zeros((2, 6))
     k = 0
+    import threading
+    before = set(threading.enumerate())
     with mujoco.viewer.launch_passive(m, d) as v:
+        ui_threads = [t for t in threading.enumerate() if t not in before]
         while v.is_running():
             mujoco.mj_forward(m, d)
             if k % DECIM == 0:
@@ -156,6 +159,10 @@ def view():
             mujoco.mj_step(m, d)
             v.sync()
             k += 1
+    # close() 는 종료 요청만 한다. 뷰어 스레드가 끝나기 전에 인터프리터가 내려가면
+    # glfw.terminate 와 render_loop 가 겹쳐 segfault (Ubuntu, MuJoCo 3.12) → 스레드 종료를 기다린다.
+    for t in ui_threads:
+        t.join(timeout=5.0)
 
 
 if __name__ == "__main__":

@@ -38,6 +38,9 @@ python3 -m venv .venv
 .venv/bin/python MPC/src/mit/10_walk.py --vx 0.6 --profile ramp --fix yawref --seconds 20
 GAIT_ON=1 .venv/bin/python MPC/src/affine/18_gait_quality.py --seconds 120 --vx 0.5 0.7 \
     --var "tds=1.25,copm=0.9,wzp=1,wxp=0,ctl=affine,refshape=1"
+
+# 4) 뷰어 (--view) — HiDPI (배율 200 %) Wayland 에선 GLFW 를 X11 로 (안 하면 창의 왼쪽 아래 1/4 에만 그려진다, Q&A 9/25 Q7)
+PYGLFW_LIBRARY_VARIANT=x11 .venv/bin/python MPC/src/mit/10_walk.py --vx 0.6 --profile ramp --fix yawref --seconds 30 --view
 ```
 
 ### reference (C++) 빌드 — MIT 이식 검증용 (Q&A 9/25 Q4)
