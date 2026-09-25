@@ -43,7 +43,7 @@ PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe MPC/src/mit/11_gait_quality.py -
 **허용한 편차 (D1~D5, `specs/07_port_design.md`)**: D1 모델 = 공개 URDF 변환본 (+ 발 site, armature, dt 0.002) ·
 D2 시작 = 키프레임 `stand` 에서 바로 서기 MPC (reference 의 2 s 관절 PD 초기화는 이 모델에서 넘어짐) ·
 D3 헤드리스 명령 주입 (y·yaw 포함) · D4 다리 동역학을 전신 모델 블록으로 (별도 고정 기반 모델과 4e-15 일치) ·
-D5 python osqp 1.1.3 (reference 는 OsqpEigen / osqp 0.6.x).
+D5 python osqp 1.1.3 (reference 는 OsqpEigen / osqp 0.6.x). ⚠ 정정 (Q&A 9/25 Q6): 실제 빌드는 osqp 1.0.0.
 
 **모르는 것 (U1~U2)**: reference 의 MIT MJCF 는 비공개 — 디버그 마커 질량 (G1·H1 씬엔 0.21 kg), 관절 armature/damping, 접촉 파라미터.
 

@@ -8,7 +8,7 @@
 
 ---
 
-## Ubuntu (24.04 기준)
+## Ubuntu (24.04 기준, 22.04 는 아래 2) 의 uv 방식 — Q&A 9/25 Q5)
 
 ```bash
 # 0) 시스템 패키지 — 파이썬 venv + reference C++ 빌드 (GLFW 창 포함)
@@ -27,6 +27,11 @@ python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu   # GPU 머신이면 cu 빌드
+#    Ubuntu 22.04 (시스템 3.10) 에선 위가 안 된다 — numpy 2.5.3 · scipy 1.18.1 이 Python >= 3.12 요구.
+#    uv (https://docs.astral.sh/uv) 로 3.13 을 받아 쓴다 (sudo·PPA 불필요, python3-venv/-dev 도 불필요):
+#      uv venv --python 3.13 --seed .venv
+#      uv pip install --python .venv/bin/python -r requirements.txt
+#      uv pip install --python .venv/bin/python torch --index-url https://download.pytorch.org/whl/cpu
 
 # 3) 동작 확인 (Windows 의 .venv/Scripts/python.exe 대신 .venv/bin/python, PYTHONIOENCODING 은 필요 없다)
 .venv/bin/python MPC/src/mit/02_unit_checks_A.py
@@ -42,10 +47,16 @@ GAIT_ON=1 .venv/bin/python MPC/src/affine/18_gait_quality.py --seconds 120 --vx 
 mkdir -p ~/.local && cd ~/.local && git clone https://github.com/microsoft/vcpkg.git && ./vcpkg/bootstrap-vcpkg.sh
 echo 'export VCPKG_ROOT="$HOME/.local/vcpkg"' >> ~/.bashrc && source ~/.bashrc
 # MuJoCo 소스 빌드 → ~/.local/mujoco  (reference CMakePresets 가 $HOME/.local/mujoco/lib/cmake/mujoco 를 찾는다)
-cd ~ && git clone https://github.com/google-deepmind/mujoco.git && cd mujoco
-cmake -S . -B build -DCMAKE_INSTALL_PREFIX="$HOME/.local/mujoco" && cmake --build build -j && cmake --install build
-# reference
-cd ~/work/residual-RL/reference && cmake --preset dev && cmake --build --preset dev -j
+#   태그는 파이썬 mujoco 와 같은 3.12.0 (C++·Python 차분 비교 때 엔진 차이를 없앤다).
+#   GLFW_BUILD_WAYLAND=OFF: 딸려 오는 GLFW 가 wayland-scanner 를 찾다 실패한다 (X11 만 빌드, Wayland 세션에선 XWayland 로 뜬다)
+mkdir -p ~/.local/src && git clone --depth 1 --branch 3.12.0 https://github.com/google-deepmind/mujoco.git ~/.local/src/mujoco
+cd ~/.local/src/mujoco && cmake -S . -B build -DCMAKE_INSTALL_PREFIX="$HOME/.local/mujoco" -DCMAKE_BUILD_TYPE=Release \
+    -DMUJOCO_BUILD_TESTS=OFF -DMUJOCO_TEST_PYTHON_UTIL=OFF -DGLFW_BUILD_WAYLAND=OFF
+cmake --build build -j && cmake --install build
+# reference — MuJoCo 3.12 에서 mjData.qM 이 없어져 한 줄 고쳐야 컴파일된다 (mj_fullM 인자 순서 변경, 하는 일 같음. Q&A 9/25 Q6)
+cd ~/work/residual-RL/reference
+sed -i 's|mj_fullM(model, denseMassScratch.data(), data->qM);|mj_fullM(model, data, denseMassScratch.data());|' sim/src/LegSwingDynamicsProvider.cpp
+cmake --preset dev && cmake --build --preset dev -j        # 의존성: vcpkg baseline 4bc07e3 → osqp 1.0.0, eigen3 5.0.1, glfw3 3.4 …
 ./build/apps/main g y          # G1 + 뷰어. 키는 뷰어 창이 아니라 이 터미널에 (w/s a/d q/e, space)
 ```
 
