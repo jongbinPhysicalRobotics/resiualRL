@@ -65,5 +65,7 @@ D5 python osqp 1.1.3 (reference 는 OsqpEigen / osqp 0.6.x).
 | **램프 + `yawref`** | **120 s, 88 %** (0.53 m/s) | **120 s, 70 %** (0.21 m/s) | **120 s, 100 %** (1.30 rad/s) |
 | 램프 + `slide+yawref` + OSQP 4000 회 | 120 s, 92 % | 120 s, 79 % | 120 s, 100 % |
 
+**검증 수준**: reference C++ 과 코드 읽기 대조 (검토자 2 명 + 한 틱 손계산, 불일치 0) 까지. reference 를 실제로 돌려 출력을 비교하지는 않았다 (Linux 전용 + MIT 모델 비공개) — 차분 검증 계획은 Q&A 9/25 Q4.
+
 서기 10 s · 제자리 걸음 120 s 는 충실한 이식 그대로 통과. 회전에선 스윙 다리 hip abad (34 N·m) 가 스윙 시간의 34~62 % 포화
 (reference 와 같은 ctrlrange 에서 clamp). 걸음 모양은 렌더로 확인할 것.
