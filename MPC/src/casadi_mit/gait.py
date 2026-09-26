@@ -149,7 +149,8 @@ class GaitScheduler:
     MIT (cycle 0.5): Left swing [0.08,0.25), Right swing [0.33,0.5) (cycle 원점 기준).
     """
 
-    def __init__(self, cfg, clock: HorizonClock | None = None):
+    def __init__(self, cfg, clock: HorizonClock | None = None, side_swap: bool = False):
+        self.side_swap = bool(side_swap)
         self.cycle, self.swing, self.stance, _, self.N, self.dt_mpc = timing_params(cfg)
         self.clock = clock
         # C++ 은 LocomotionMode 기본값이 Walking 이 아니라 생성 후 setLocomotionMode 로 정해진다.
@@ -175,7 +176,7 @@ class GaitScheduler:
         if clk is None:
             raise RuntimeError("GaitScheduler::p requires initialized HorizonClock")
         phi = 0.0
-        if leg == LEFT:
+        if leg == (RIGHT if self.side_swap else LEFT):   # side_swap: 좌우 위상 맞바꿈 (Q&A 9/26 Q7 실험용)
             phi = 0.5
         return math.fmod((float(t) - clk.t0) / self.cycle + phi, 1.0)
 
