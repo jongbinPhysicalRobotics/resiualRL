@@ -490,6 +490,57 @@ def print_summary(r: dict):
 
 
 # ----------------------------------------------------------------------------------------------------------------
+def _draw_refs(v, ctl, n_seg=16):
+    """뷰어 오버레이 (G1 09_walk._draw_swing 관례): 스윙 참조궤적 (왼발 초록, 오른발 파랑) + 현재 목표 (작은 구)
+    + 착지 목표 (빨간 구, planner/contact manager 의 managed desired) + MPC 몸 CoM 참조 지평 (하늘색 선)."""
+    import planner as _pl
+    scn = v.user_scn
+    scn.ngeom = 0
+
+    def sphere(p, r, rgba):
+        if scn.ngeom >= scn.maxgeom:
+            return
+        g = scn.geoms[scn.ngeom]
+        mujoco.mjv_initGeom(g, mujoco.mjtGeom.mjGEOM_SPHERE, np.array([r, 0.0, 0.0]),
+                            np.asarray(p, float), np.eye(3).flatten(), np.asarray(rgba, np.float32))
+        scn.ngeom += 1
+
+    def line(a, b, rgba, w=3.0):
+        if scn.ngeom >= scn.maxgeom:
+            return
+        g = scn.geoms[scn.ngeom]
+        mujoco.mjv_initGeom(g, mujoco.mjtGeom.mjGEOM_LINE, np.zeros(3), np.zeros(3),
+                            np.eye(3).flatten(), np.asarray(rgba, np.float32))
+        mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_LINE, w, np.asarray(a, float), np.asarray(b, float))
+        scn.ngeom += 1
+
+    ref = getattr(ctl, "last_ref", None)
+    if ref is not None:                                     # MPC 몸 CoM 참조 (지평 0.5 s)
+        P = ref.X_ref[:, 3:6]
+        for a, b in zip(P[:-1], P[1:]):
+            line(a, b, (0.2, 0.85, 1.0, 0.6), 2.0)
+    for leg, col in ((0, (0.1, 0.9, 0.1, 0.9)), (1, (0.25, 0.45, 1.0, 0.9))):
+        rt = ctl.legs[leg]
+        tr = rt.traj
+        if tr.active and tr.T > 0.0:                        # 스윙 전체 궤적 (같은 blend 식으로 샘플)
+            z_mid = float(tr.p_final[2]) + float(tr.height)
+            pts = []
+            for s in np.linspace(0.0, 1.0, n_seg):
+                bxy = _pl._blend(s)
+                xy = (1.0 - bxy) * tr.p_init[:2] + bxy * tr.p_final[:2]
+                if s <= 0.5:
+                    bz = _pl._blend(2.0 * s)
+                    z = (1.0 - bz) * float(tr.p_init[2]) + bz * z_mid
+                else:
+                    bz = _pl._blend(2.0 * s - 1.0)
+                    z = (1.0 - bz) * z_mid + bz * float(tr.p_final[2])
+                pts.append(np.array([xy[0], xy[1], z]))
+            for a, b in zip(pts[:-1], pts[1:]):
+                line(a, b, col, 3.0)
+            sphere(tr.position(), 0.012, col)               # 지금 이 틱의 스윙 목표
+        sphere(ctl.desired[leg], 0.016, (1.0, 0.15, 0.15, 0.9))   # 착지 목표 (빨강)
+
+
 def view(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True, profile="const", markers=False,
          stand=False, friction_scale=1.0, fsm_double_update=True, follow=True, fixes=(), x_dot_max=None,
          foot_model="ref"):
@@ -521,6 +572,8 @@ def view(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True,
                 print(f"fell at t = {d.time:.2f}")
                 break
             if k % sync_every == 0:
+                with v.lock():
+                    _draw_refs(v, ctl)                      # 참조 오버레이 (Q&A 9/26 Q7 후속 분석용)
                 v.sync()
                 lag = d.time - (time.perf_counter() - t_wall0)
                 if lag > 0:

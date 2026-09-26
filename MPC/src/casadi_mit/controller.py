@@ -170,6 +170,7 @@ class MitController:
             rt.was_search = False
             rt.touchdown_yaw = self._swing_yaw_target(state) + swing_foot_yaw_psi_offset(leg, self.filtered.psi_dot)
         self.u_hold = np.zeros(12)                                 # _stanceWrenchWorld
+        self.last_ref = None
         self.iteration = 0
         self.last_mpc_iteration = 0
         self.last_toggle = 0
@@ -302,6 +303,7 @@ class MitController:
                 if "yawref" in self.fixes:                         # 변형: 방향 유지 (reference 는 x0 yaw)
                     seed[2] = self.body.euler_W[2]
             ref = build_reference(self.filtered.copy(), seed, desired, self.clock, self.cfg)
+            self.last_ref = ref                                # 뷰어 오버레이용 (10_walk._draw_refs)
             u0, info = self.mpc.solve(x0, ref, steps, foot_yaw, state.reduced, self.mode, active=active)
             info["x_ref0"] = ref.X_ref[0].copy()
             info["stance0"] = np.asarray(steps[0].stance, dtype=bool).copy()
