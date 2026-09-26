@@ -95,6 +95,8 @@ def parse_variant(s: str | None) -> dict:
             kw.setdefault("osqp_settings", {})["check_dualgap"] = int(v)
         elif k == "xmax":                          # 명령 필터 전진 상한 (reference 0.7) — 1 m/s 시험 (Q&A 9/25 Q9)
             kw["x_dot_max"] = float(v)
+        elif k == "khalf":                         # 착지 미리보기 k_half 를 속도와 무관하게 고정 (기본: 0.37 / 0.28 / 0.26 전환)
+            kw["k_half"] = float(v)
         else:
             raise KeyError(f"unknown variant key {k!r}")
     return kw
@@ -343,11 +345,16 @@ def _tag(vx, vy, wz, variant):
 
 
 def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale, fsm_double_update, verbose,
-           osqp_settings=None, fixes=(), x_dot_max=None):
+           osqp_settings=None, fixes=(), x_dot_max=None, k_half=None):
     cfg = config.load()
-    if x_dot_max is not None:                     # 명령 필터 전진 상한 변형 (기본 = yaml 0.7)
+    if x_dot_max is not None or k_half is not None:
         raw = cfg.to_dict()
-        raw["user_command_filter"]["x_dot_max"] = float(x_dot_max)
+        if x_dot_max is not None:                 # 명령 필터 전진 상한 변형 (기본 = yaml 0.7)
+            raw["user_command_filter"]["x_dot_max"] = float(x_dot_max)
+        if k_half is not None:                    # swing.*half_stance_offset 세 값을 하나로 (기본 = 0.37 / 0.28 / 0.26)
+            for key in ("body_velocity_half_stance_offset", "mid_speed_body_velocity_half_stance_offset",
+                        "high_speed_body_velocity_half_stance_offset"):
+                raw["swing"][key] = float(k_half)
         cfg = config.MitConfig(raw)
     model = MitModel(armature=armature, emulate_debug_markers=markers)
     model.reset(str(cfg.port.spawn_keyframe))
@@ -369,11 +376,11 @@ def _fell(d) -> bool:
 
 def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True, profile="const",
              markers=False, stand=False, friction_scale=1.0, fsm_double_update=True, osqp_settings=None, log=False,
-             variant=None, verbose=True, print_every=10.0, keep_record=False, fixes=(), x_dot_max=None):
+             variant=None, verbose=True, print_every=10.0, keep_record=False, fixes=(), x_dot_max=None, k_half=None):
     """walking seconds 동안 (시뮬 = settle + seconds). 반환 dict (metrics + fell 등)."""
     cfg, model, ctl, walk_t = _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale,
                                      fsm_double_update, verbose=False, osqp_settings=osqp_settings, fixes=fixes,
-                                     x_dot_max=x_dot_max)
+                                     x_dot_max=x_dot_max, k_half=k_half)
     m, d = model.m, model.d
     total = (0.0 if stand else walk_t) + seconds
     n = int(round(total / m.opt.timestep))
