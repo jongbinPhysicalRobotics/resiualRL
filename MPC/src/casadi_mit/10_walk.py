@@ -105,6 +105,10 @@ def parse_variant(s: str | None) -> dict:
             kw["k_half"] = float(v)
         elif k == "foot":                          # 발 접촉 모델: ref | line (OA-MPC 선 접촉)
             kw["foot_model"] = str(v)
+        elif k == "standhold":                     # 서기 발 yaw hold (기본 1 — Q&A 9/26 Q6)
+            kw["stand_yaw_hold"] = bool(int(v))
+        elif k == "standbias":                     # 서기 다리 자중 보상 (기본 1 — Q&A 9/26 Q6)
+            kw["stand_bias"] = bool(int(v))
         elif k == "mpcmu":                         # MPC 제약의 µ (기본 yaml 1.0). 시뮬 마찰 (mu=) 과 별개. µ_t = 0.0657·µ 도 따라감
             kw["mpc_mu"] = float(v)
         else:
@@ -370,7 +374,8 @@ def _tag(vx, vy, wz, variant):
 
 
 def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale, fsm_double_update, verbose,
-           osqp_settings=None, fixes=(), x_dot_max=None, k_half=None, foot_model="ref", mpc_mu=None):
+           osqp_settings=None, fixes=(), x_dot_max=None, k_half=None, foot_model="ref", mpc_mu=None,
+           stand_yaw_hold=True, stand_bias=True):
     cfg = config.load()
     if x_dot_max is not None or k_half is not None or mpc_mu is not None:
         raw = cfg.to_dict()
@@ -390,7 +395,7 @@ def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale
     ctl = MitController(model, cfg, sched, solver=solver, requested_mode="standing" if stand else None,
                         emulate_markers=markers, friction_scale=friction_scale,
                         fsm_double_update=fsm_double_update, osqp_settings=osqp_settings, verbose=verbose,
-                        fixes=fixes, foot_model=foot_model)
+                        fixes=fixes, foot_model=foot_model, stand_yaw_hold=stand_yaw_hold, stand_bias=stand_bias)
     return cfg, model, ctl, walk_t
 
 
@@ -404,11 +409,12 @@ def _fell(d) -> bool:
 def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True, profile="const",
              markers=False, stand=False, friction_scale=1.0, fsm_double_update=True, osqp_settings=None, log=False,
              variant=None, verbose=True, print_every=10.0, keep_record=False, fixes=(), x_dot_max=None, k_half=None,
-             foot_model="ref", mpc_mu=None):
+             foot_model="ref", mpc_mu=None, stand_yaw_hold=True, stand_bias=True):
     """walking seconds 동안 (시뮬 = settle + seconds). 반환 dict (metrics + fell 등)."""
     cfg, model, ctl, walk_t = _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale,
                                      fsm_double_update, verbose=False, osqp_settings=osqp_settings, fixes=fixes,
-                                     x_dot_max=x_dot_max, k_half=k_half, foot_model=foot_model, mpc_mu=mpc_mu)
+                                     x_dot_max=x_dot_max, k_half=k_half, foot_model=foot_model, mpc_mu=mpc_mu,
+                                     stand_yaw_hold=stand_yaw_hold, stand_bias=stand_bias)
     m, d = model.m, model.d
     total = (0.0 if stand else walk_t) + seconds
     n = int(round(total / m.opt.timestep))

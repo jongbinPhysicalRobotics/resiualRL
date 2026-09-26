@@ -56,7 +56,7 @@ from command import CommandFilter, UserCommand
 from contact_manager import ContactManager
 from fsm import LocomotionFSM, LocomotionState
 from gait import GaitScheduler, HorizonClock
-from leg_control import arm_pd, standing_torque, swing_torque, walking_stance_torque
+from leg_control import arm_pd, standing_torque, stance_yaw_hold_moment_z, swing_torque, walking_stance_torque
 from mit_model import LEFT, RIGHT, Rz
 from mpc import build_reference, mpc_foot_yaw
 from mpc_casadi import CasadiCondensedMPC
@@ -87,12 +87,22 @@ def _rpy_to_quat(r, p, y) -> np.ndarray:
     return q / np.linalg.norm(q)
 
 
+class _StandDyn:
+    def __init__(self, Jw):
+        self.Jw = Jw
+
+
 class MitController:
     def __init__(self, model, cfg, schedule, *, solver: str | None = None, requested_mode: str | None = None,
                  emulate_markers: bool = False, fsm_double_update: bool = True, friction_scale: float = 1.0,
-                 osqp_settings: dict | None = None, verbose: bool = False, fixes=(), foot_model: str = "ref"):
+                 osqp_settings: dict | None = None, verbose: bool = False, fixes=(), foot_model: str = "ref",
+                 stand_yaw_hold: bool = True, stand_bias: bool = True):
         self.fixes = set(fixes or ())
         self.foot_model = str(foot_model)
+        self.stand_bias = bool(stand_bias)           # 서기에서 다리 자중 (qfrc_bias) 보상 — Q&A 9/26 Q6:
+                                                     # 순수 Jᵀ wrench 는 다리 자중을 안 보상해 발이 평행하게 안으로 크리프 (60 s 에 65 mm)
+        self.stand_yaw_hold = bool(stand_yaw_hold)   # 서기에서도 발 yaw hold (reference C++ 엔 없음 — Q&A 9/26 Q6:
+                                                     # 서기는 관절 PD 가 없어 hip yaw 가 자유 내부 자유도 → 60 s 에 발 뒤꿈치가 140 mm 모임)
         unknown = self.fixes - {"slide", "yawref", "yawanchor"}
         if unknown:
             raise ValueError(f"unknown fixes {sorted(unknown)}")
@@ -318,7 +328,19 @@ class MitController:
         tau = np.zeros((2, 5))
         if self.mode == "standing":
             Jv, Jw = self.model.standing_jacobians()
-            return standing_torque(Jv, Jw, self.u_hold)
+            u_st = self.u_hold
+            if self.stand_yaw_hold:                    # 걷기의 stance yaw hold (7.6) 를 서기에도 (Q&A 9/26 Q6)
+                u_st = np.asarray(u_st, dtype=float).copy()
+                Jw_a = np.asarray(Jw)
+                for leg, col, sl in ((LEFT, 8, slice(0, 5)), (RIGHT, 11, slice(5, 10))):
+                    shim = _StandDyn(Jw_a[3 * leg:3 * leg + 3, sl])
+                    # standing_torque 는 m = −u 로 적용 → 적용 모멘트에 +m_z 를 더하려면 u 에서 뺀다
+                    u_st[col] -= stance_yaw_hold_moment_z(state, leg, shim, self.legs[leg].touchdown_yaw, cfg)
+            tau = standing_torque(Jv, Jw, u_st)
+            if self.stand_bias:
+                for leg in LEGS:
+                    tau[leg] += self.model.leg_dynamics(leg).bias
+            return tau
         for leg in LEGS:
             rt = self.legs[leg]
             dyn = self.model.leg_dynamics(leg)
