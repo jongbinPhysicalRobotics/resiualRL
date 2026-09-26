@@ -66,7 +66,7 @@ def _f(v, fmt):
 COLS = [("cmd", 14, None), ("var", 18, None), ("surv", 6, ".1f"), ("trk%", 6, ".0f"), ("vx", 6, "+.2f"),
         ("vy", 6, "+.2f"), ("wz", 6, "+.2f"), ("rollσ", 6, ".3f"), ("pitchσ", 6, ".3f"), ("yaw95", 6, ".3f"),
         ("apex", 5, ".0f"), ("tdErr", 11, None), ("early", 5, ".2f"), ("slip", 5, ".1f"), ("τ/lim", 5, ".2f"),
-        ("sat", 5, ".3f"), ("fb", 3, "d"), ("cold", 5, ".2f"), ("ms", 5, ".1f")]
+        ("sat", 5, ".3f"), ("µuse95", 6, ".2f"), ("µmax", 5, ".2f"), ("fb", 3, "d"), ("cold", 5, ".2f"), ("ms", 5, ".1f")]
 
 
 def row(r) -> list[str]:
@@ -78,7 +78,7 @@ def row(r) -> list[str]:
             _f(r["pitch_sd"], ".3f"), _f(r.get("yaw_osc95"), ".3f"), _f(r["apex_mm"], ".0f"),
             f"{_f(r['td_err_ms'], '+.0f')}±{_f(r['td_err_sd_ms'], '.0f')}", _f(r["early_rate"], ".2f"),
             _f(r["slip_mm"], ".1f"), _f(r.get("tau_ratio_max"), ".2f"), _f(r.get("tau_sat_frac"), ".3f"),
-            _f(r["fallbacks"], "d"), _f(r["cold_rate"], ".2f"), _f(r["solve_ms_med"], ".1f")]
+            _f(r.get("fric_cone_p95"), ".2f"), _f(r.get("fric_cone_max"), ".2f"), _f(r["fallbacks"], "d"), _f(r["cold_rate"], ".2f"), _f(r["solve_ms_med"], ".1f")]
 
 
 def print_table(results, markdown=False):

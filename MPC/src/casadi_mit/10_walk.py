@@ -105,6 +105,8 @@ def parse_variant(s: str | None) -> dict:
             kw["k_half"] = float(v)
         elif k == "foot":                          # 발 접촉 모델: ref | line (OA-MPC 선 접촉)
             kw["foot_model"] = str(v)
+        elif k == "mpcmu":                         # MPC 제약의 µ (기본 yaml 1.0). 시뮬 마찰 (mu=) 과 별개. µ_t = 0.0657·µ 도 따라감
+            kw["mpc_mu"] = float(v)
         else:
             raise KeyError(f"unknown variant key {k!r}")
     return kw
@@ -295,6 +297,21 @@ def compute_metrics(R: dict, cmd=(0.0, 0.0, 0.0), walk_t=None, lim=None, window=
     out["early_rate"] = early_sw / n_sw if n_sw else np.nan
     out["slip_mm"] = 1e3 * float(np.mean(slips)) if slips else np.nan
     out["slip_max_mm"] = 1e3 * float(np.max(slips)) if slips else np.nan
+    # 마찰 사용률 (MPC 명령 u, 디딤 발, Fz > 20 N): 원뿔 |F_xy|/Fz 와 사각뿔 max(|Fx|,|Fy|)/Fz (제약이 보는 양)
+    fr_c, fr_p = [], []
+    for leg, (ix, iy, iz) in enumerate(((0, 1, 2), (3, 4, 5))):
+        m_ = win & (R["active"][:, leg] > 0.5) & (R["u"][:, iz] > 20.0)
+        if m_.any():
+            fx, fy, fz = R["u"][m_, ix], R["u"][m_, iy], R["u"][m_, iz]
+            fr_c.append(np.hypot(fx, fy) / fz)
+            fr_p.append(np.maximum(np.abs(fx), np.abs(fy)) / fz)
+    if fr_c:
+        fr_c, fr_p = np.concatenate(fr_c), np.concatenate(fr_p)
+        out["fric_cone_p95"] = float(np.percentile(fr_c, 95))
+        out["fric_cone_max"] = float(fr_c.max())
+        out["fric_pyr_p95"] = float(np.percentile(fr_p, 95))
+    else:
+        out["fric_cone_p95"] = out["fric_cone_max"] = out["fric_pyr_p95"] = np.nan
     if lim is not None:
         ratio = np.abs(R["tau"][win]) / lim[None, :]
         out["tau_ratio_max"] = float(ratio.max()) if ratio.size else np.nan
@@ -353,10 +370,12 @@ def _tag(vx, vy, wz, variant):
 
 
 def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale, fsm_double_update, verbose,
-           osqp_settings=None, fixes=(), x_dot_max=None, k_half=None, foot_model="ref"):
+           osqp_settings=None, fixes=(), x_dot_max=None, k_half=None, foot_model="ref", mpc_mu=None):
     cfg = config.load()
-    if x_dot_max is not None or k_half is not None:
+    if x_dot_max is not None or k_half is not None or mpc_mu is not None:
         raw = cfg.to_dict()
+        if mpc_mu is not None:                    # MPC 마찰 제약 µ 변형 (기본 = yaml 1.0, Q&A 9/26 Q4)
+            raw["mpc"]["friction_coefficient"] = float(mpc_mu)
         if x_dot_max is not None:                 # 명령 필터 전진 상한 변형 (기본 = yaml 0.7)
             raw["user_command_filter"]["x_dot_max"] = float(x_dot_max)
         if k_half is not None:                    # swing.*half_stance_offset 세 값을 하나로 (기본 = 0.37 / 0.28 / 0.26)
@@ -385,11 +404,11 @@ def _fell(d) -> bool:
 def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True, profile="const",
              markers=False, stand=False, friction_scale=1.0, fsm_double_update=True, osqp_settings=None, log=False,
              variant=None, verbose=True, print_every=10.0, keep_record=False, fixes=(), x_dot_max=None, k_half=None,
-             foot_model="ref"):
+             foot_model="ref", mpc_mu=None):
     """walking seconds 동안 (시뮬 = settle + seconds). 반환 dict (metrics + fell 등)."""
     cfg, model, ctl, walk_t = _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale,
                                      fsm_double_update, verbose=False, osqp_settings=osqp_settings, fixes=fixes,
-                                     x_dot_max=x_dot_max, k_half=k_half, foot_model=foot_model)
+                                     x_dot_max=x_dot_max, k_half=k_half, foot_model=foot_model, mpc_mu=mpc_mu)
     m, d = model.m, model.d
     total = (0.0 if stand else walk_t) + seconds
     n = int(round(total / m.opt.timestep))
@@ -450,6 +469,8 @@ def print_summary(r: dict):
           f"yaw osc95 {r.get('yaw_osc95', float('nan')):.4f} rad")
     print(f"  swings {r['n_swings']}  apex {r['apex_mm']:.1f} mm  td err {r['td_err_ms']:+.1f}±{r['td_err_sd_ms']:.1f} ms  "
           f"early {r['early_rate']:.2f}  slip/step {r['slip_mm']:.1f} mm (max {r['slip_max_mm']:.1f})")
+    print(f"  friction use |F_xy|/Fz p95 {r.get('fric_cone_p95', float('nan')):.2f} (max {r.get('fric_cone_max', float('nan')):.2f})"
+          f"  pyramid max(|Fx|,|Fy|)/Fz p95 {r.get('fric_pyr_p95', float('nan')):.2f}")
     print(f"  tau/limit max {r.get('tau_ratio_max', float('nan')):.2f}  sat frac {r.get('tau_sat_frac', float('nan')):.3f}")
     print(f"  MPC solves {r['solves']}  cold rate {r['cold_rate']:.3f}  fallbacks {r['fallbacks']}  "
           f"median {r['solve_ms_med']:.2f} ms (p99 {r['solve_ms_p99']:.1f})  iters {r['iters_med']:.0f}")
