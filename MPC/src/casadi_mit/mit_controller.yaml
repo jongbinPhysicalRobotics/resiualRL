@@ -18,7 +18,7 @@ mpc:
   foot_half_length: 0.065
   foot_half_width: 0.01
   torsional_friction_scale: 0.0657
-  normal_force_max: 1500.0
+  normal_force_max: 500.0   # 9/26 Q5: 1500 은 비현실적 (사용자) — 0.6 걷기 실측 max 명령 Fz 486 N, 500 으로 제한
   normal_force_min: 5.0 # Could this cause MPC solve issues? Should this be 0 N instead?
   use_shifted_warm_start: true
   iterations_between_solve: 7
