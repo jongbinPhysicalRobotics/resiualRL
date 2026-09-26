@@ -1,0 +1,163 @@
+requested_locomotion_mode: walking  # requested startup mode: walking / standing / interactive
+
+timing:
+  cycle: 0.5
+  swing: 0.17
+  stance: 0.33
+  horizon: 0.5
+  horizon_steps: 25
+
+model:
+  xml_path: models/mit_humanoid/scene.xml
+  auxiliary_xml_path: models/mit_humanoid/mit_humanoid.xml
+  foot_end_effector_source: site  # site or collision_geom_center
+  gravity: -9.81
+
+mpc:
+  friction_coefficient: 1.0
+  foot_half_length: 0.065
+  foot_half_width: 0.01
+  torsional_friction_scale: 0.0657
+  normal_force_max: 1500.0
+  normal_force_min: 5.0 # Could this cause MPC solve issues? Should this be 0 N instead?
+  use_shifted_warm_start: true
+  iterations_between_solve: 7
+  walking:
+    contact_wrench_model: full_wrench  # full_wrench or no_roll_moment
+    #                    roll   pitch  yaw    px     py     pz      omega_x  omega_y  omega_z  vx     vy     vz    g
+    state_weight_diag: [50000,  9000,  500,   200000,  1009300,  110000,     10,     10,     10,     100,    70,    10,   1 ]
+    #                    Fx_L    Fy_L    Fz_L    Fx_R    Fy_R    Fz_R    Mx_L    My_L    Mz_L    Mx_R    My_R    Mz_R
+    input_weight_diag: [1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3]
+    # [1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3]
+  standing:
+    contact_wrench_model: full_wrench  # full_wrench or no_roll_moment
+    # Keep the same baseline for now; tune this separately from walking later.
+    #                    roll   pitch  yaw    px     py     pz      omega_x  omega_y  omega_z  vx     vy     vz    g
+    state_weight_diag: [50000,  80000,   500,    50000,  90000,  50000,      10,     10,     10,     10,    10,    5,   1 ]
+    #                    Fx_L    Fy_L    Fz_L    Fx_R    Fy_R    Fz_R    Mx_L    My_L    Mz_L    Mx_R    My_R    Mz_R
+    input_weight_diag: [1.0e-4, 1.0e-4, 1.0e-4, 1.0e-4, 1.0e-4, 1.0e-4, 1.0e-4, 1.0e-4, 1.0e-4, 1.0e-4, 1.0e-4, 1.0e-4]
+
+swing:
+  natural_frequency: [151.0, 151.0, 110.0]
+  kd_diag: [25.0, 25.0, 25.0]
+  height: 0.06
+  min_remaining_time: 0.001
+  body_velocity_half_stance_offset: 0.37
+  mid_speed_body_velocity_half_stance_offset: 0.28
+  body_velocity_half_stance_offset_switch_speed: 0.60
+  high_speed_body_velocity_half_stance_offset: 0.26
+  high_speed_body_velocity_half_stance_offset_switch_speed: 0.65
+  swing_foot_yaw_lead_scale: 1.0
+  enable_stance_foot_yaw_hold: true
+  turn_tangential_lead_scale: 1.0
+  nominal_foot_offsets_B:
+    - [0.0, 0.075999602, 0.0] # [0.0, 0.075999602, 0.0]
+    - [0.0, -0.075999602, 0.0]
+  # Optional fixed override for the stop-braking offset added at touchdown.
+  # Uncomment to replace the capture-point braking heuristic with a constant body-frame offset.
+  # stop_braking_offset_B: [0.0, 0.0, 0.0]
+  stop_capture_point_gain: 0.2
+  stop_capture_point_max_offset: 0.08
+  stop_velocity_deadband: 0.02
+  stop_braking_latch_clear_ticks: 5
+  # MIT humanoid is 5-DOF at the leg, so keep swing roll control disabled.
+  roll_kp: 0.0
+  roll_kd: 0.0
+  pitch_kp: 300.0
+  pitch_kd: 18.0
+  yaw_kp: 305.0
+  yaw_kd: 18.0
+  stance_yaw_kp: 20.0
+  stance_yaw_kd: 4.0
+
+user_command_filter:
+  x_dot_tau: 0.92
+  y_dot_tau: 0.8
+  psi_dot_tau: 0.70
+  standing_roll_offset_tau: 0.70
+  standing_pitch_offset_tau: 0.70
+  x_dot_max: 0.7
+  y_dot_max: 0.5
+  psi_dot_max: 2.0
+
+reference_trajectory:
+  # single_support: legacy behavior, double_support: only when both feet are stance, always: integrate every step
+  yaw_integration_mode: always
+
+contact_manager:
+  contact_force_on_threshold: 36.0
+  contact_force_off_threshold: 0.5
+  contact_on_confirm_ticks: 1
+  contact_off_confirm_ticks: 4
+  contact_ramp_duration: 0.01
+  contact_lock_steps: 1
+  late_contact_timeout: 0.20
+  ground_search_velocity: 0.40
+  ground_search_max_depth: 0.15
+  ground_search_tracking_time: 0.08
+  stance_contact_loss_foot_height: 0.060
+  enable_early_contact_handling: true
+  enable_late_contact_handling: false
+
+logging:
+  standing_mpc_debug_trigger_times: []
+
+startup:
+  # If requested_locomotion_mode is walking, hold standing MPC this long after leg PD init before gait starts.
+  post_init_standing_settle_time: 1.0
+
+locomotion_transition:
+  # In interactive mode, walking -> standing first zeroes the motion command.
+  # Stay in the low-motion settle phase until moving-average body speed and yaw rate
+  # have been slow for this many ticks, then wait for either this timeout or this many
+  # touchdown events.
+  braking_settle_speed_threshold: 0.01
+  braking_settle_yaw_rate_threshold: 0.01
+  braking_settle_average_window: 1.0
+  braking_settle_hold_ticks: 3
+  braking_timeout_seconds: 3.0
+  braking_touchdown_count: 5
+
+joint_tracking:
+  leg:
+    # MIT humanoid order: [hip_yaw, hip_abad, hip_pitch, knee, ankle]
+    kp: [70.0, 50.0, 100.0, 100.0, 200.0]
+    kd: [15.0, 10.0, 10.0, 10.0, 30.0]
+  arm:
+    # MIT humanoid order: [shoulder_pitch, shoulder_abad, shoulder_yaw, elbow]
+    kp: [100.0, 100.0, 100.0, 100.0]
+    kd: [5.0, 5.0, 5.0, 5.0]
+
+initial_pose:
+  # Floating-base pose from the scene keyframe. Used once to seed the reduced-body target.
+  base_position_W: [0.0, 0.0, 0.679472]  # 0.625972 / 0.679472
+  base_rpy_W: [0.0, 0.0, 0.0]
+  leg_initialization_time: 2.0
+  arm_initialization_time: 1.0
+  leg_joint_offsets: [0, 0, -0.735, 1.2, -0.70]
+  arm_joint_offsets: [0.0, 0.0, 0.0, -1.65]
+
+gait_swing_hold_test:
+  xml_path: models/mit_humanoid/scene_test.xml
+  keyframe_name: copied_state
+
+# ---------------------------------------------------------------------------
+# port: Python 포팅 전용 설정 (reference yaml 에는 없음). 위쪽은 reference
+# config/mit_humanoid/my_controller.yaml 을 그대로 복사한 것 (수정 금지).
+# 허용된 편차 D1-D5 는 07_port_design.md §1 표 참고.
+# ---------------------------------------------------------------------------
+port:
+  # D2: 시작 자세 = 우리 모델의 keyframe "stand" (발 평평, 전신 CoM 위, base z 0.679472).
+  #     reference 는 qpos0 에서 떨어뜨리고 2 s 관절 PD 로 자세를 잡지만, 이 모델에선 PD 만으로 넘어진다.
+  spawn_keyframe: stand
+  # D2: 2 s 다리 PD 초기화 생략 — 컨트롤러가 t = 0 에서 StandingSettle 로 시작 (1.0 s 후 Walking).
+  skip_leg_pd_init: true
+  # D1: URDF rotor_inertia 를 MuJoCo armature 로 사용. false 면 armature 0 (민감도 확인용, U2).
+  armature: true
+  # D5: MPC QP 솔버. osqp (reference 와 같은 알고리즘) | quadprog (정확한 QP 비교용).
+  solver: osqp
+  # D1 / reference config/simulation.yaml: physics_timestep_sec 0.002, implicitfast (로드 시 덮어씀).
+  physics_dt: 0.002
+  integrator: implicitfast
+  # U1: reference 씬에 있을지 모르는 디버그 마커 mocap 바디 질량 (≈0.21 kg) 을 축소 몸체에 흉내낼지. 기본 끔.
+  emulate_debug_markers: false
