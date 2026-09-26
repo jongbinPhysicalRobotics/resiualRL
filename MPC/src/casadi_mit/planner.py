@@ -258,8 +258,10 @@ class SwingFootPlanner:
     진단용 속성 (C++ 에 없음, 읽기만): stop_active, stop_just_activated, last_updated (2,) bool.
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, raibert_gain: float = 0.0, raibert_max: float = 0.10):
         self.cfg = cfg
+        self.raibert_gain = float(raibert_gain)      # 측정 속도 되먹임 Δp = K(v_meas − v_cmd) (Q&A 9/26 Q8, 기본 0 = reference)
+        self.raibert_max = float(raibert_max)
         self.cycle, self.swing_time, self.stance_time, _, _, _ = timing_params(cfg)
         offs = cfg_get(cfg, "swing.nominal_foot_offsets_B", None)
         if offs is not None and len(offs) > 0:
@@ -389,6 +391,15 @@ class SwingFootPlanner:
         planned_B = _rzT_mul(yaw0, step_W) + _rz_mul(yaw_td - yaw0, off_B)
         if stop_recenter:
             planned_B = _rz_mul(yaw_td - yaw0, off_B)
+        if self.raibert_gain > 0.0:                # 측정 속도 되먹임 (Q&A 9/26 Q8): reference 는 명령 속도만 써서
+            v_cmd_W = _rz_mul(yaw_trans, v_B)      # 옆 드리프트·과속을 발걸음이 못 잡는다 → Δp = K(v_meas − v_cmd), 클램프
+            verr = np.asarray(x0[9:12], dtype=float) - v_cmd_W
+            corr = self.raibert_gain * verr
+            n_c = _norm2(corr[0], corr[1])
+            if n_c > self.raibert_max:
+                corr = corr * (self.raibert_max / n_c)
+            corr_B = _rzT_mul(yaw0, np.array([corr[0], corr[1], 0.0]))
+            planned_B = planned_B + corr_B
         # 좌우 교차 방지 (lateral crossing guard)
         lat = float(off_B[1])
         if lat > 0.0:

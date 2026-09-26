@@ -96,9 +96,11 @@ class MitController:
     def __init__(self, model, cfg, schedule, *, solver: str | None = None, requested_mode: str | None = None,
                  emulate_markers: bool = False, fsm_double_update: bool = True, friction_scale: float = 1.0,
                  osqp_settings: dict | None = None, verbose: bool = False, fixes=(), foot_model: str = "ref",
-                 stand_yaw_hold: bool = True, stand_bias: bool = True, side_swap: bool = False):
+                 stand_yaw_hold: bool = True, stand_bias: bool = True, side_swap: bool = False,
+                 raibert_gain: float = 0.0):
         self.fixes = set(fixes or ())
         self.foot_model = str(foot_model)
+        self.raibert_gain = float(raibert_gain)
         self.side_swap = bool(side_swap)             # 걸음 위상 좌우 맞바꿈 (Q&A 9/26 Q7: 하중 쏠림은 위상 0 다리를 따라간다)
         self.stand_bias = bool(stand_bias)           # 서기에서 다리 자중 (qfrc_bias) 보상 — Q&A 9/26 Q6:
                                                      # 순수 Jᵀ wrench 는 다리 자중을 안 보상해 발이 평행하게 안으로 크리프 (60 s 에 65 mm)
@@ -148,7 +150,7 @@ class MitController:
         self.clock = HorizonClock(t, cfg)
         self.gait = GaitScheduler(cfg, self.clock, side_swap=self.side_swap)
         self.cm = ContactManager(cfg)
-        self.planner = SwingFootPlanner(cfg)
+        self.planner = SwingFootPlanner(cfg, raibert_gain=self.raibert_gain)
         self.mpc = CasadiCondensedMPC(cfg, solver=self.solver_name, osqp_settings=self.osqp_settings or None,
                                       verbose_errors=self.verbose, foot_model=self.foot_model)
         tr = cfg.locomotion_transition
