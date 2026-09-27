@@ -334,7 +334,10 @@ class MitController:
         if self.mode == "standing":
             Jv, Jw = self.model.standing_jacobians()
             u_st = self.u_hold
-            if self.stand_yaw_hold:                    # 걷기의 stance yaw hold (7.6) 를 서기에도 (Q&A 9/26 Q6)
+            # 서기 수정 (Q6) 은 '서기가 요청된' 경우만 — 걷기 전 1 s StandingSettle 에는 안 건다 (Q&A 9/27 Q1:
+            # 걸면 걷기 시작 자세가 바뀌어 경계에 있는 0.6 m/s 가 20 s 에 전도)
+            stand_fix = self.requested_mode == "standing"
+            if self.stand_yaw_hold and stand_fix:      # 걷기의 stance yaw hold (7.6) 를 서기에도 (Q&A 9/26 Q6)
                 u_st = np.asarray(u_st, dtype=float).copy()
                 Jw_a = np.asarray(Jw)
                 for leg, col, sl in ((LEFT, 8, slice(0, 5)), (RIGHT, 11, slice(5, 10))):
@@ -342,7 +345,7 @@ class MitController:
                     # standing_torque 는 m = −u 로 적용 → 적용 모멘트에 +m_z 를 더하려면 u 에서 뺀다
                     u_st[col] -= stance_yaw_hold_moment_z(state, leg, shim, self.legs[leg].touchdown_yaw, cfg)
             tau = standing_torque(Jv, Jw, u_st)
-            if self.stand_bias:
+            if self.stand_bias and stand_fix:
                 for leg in LEGS:
                     tau[leg] += self.model.leg_dynamics(leg).bias
             return tau

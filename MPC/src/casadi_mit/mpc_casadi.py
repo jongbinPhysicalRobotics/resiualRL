@@ -15,6 +15,7 @@
 
 foot_model 플래그 (기본 "ref" = 기존 동작):
   "ref"  : reference 그대로 — CoP 폭 b=0.01 허용, |Mz| ≤ 0.0657µFz, roll 등식 없음.
+  "mx0"  : reference 제약 그대로 + mx^F = 0 등식만 (reference no_roll_moment 와 같음 — Q&A 9/27 Q1: mx 효과만 분리)
   "line" : OA-MPC 선 접촉 (Ding et al. Humanoids 2022 §III-F, Q&A 9/26 논의). 발이 선(발끝~뒤꿈치)으로
            닿는 우리 MIT 모델에 물리적으로 맞는 제약:
              mx = 0 (발 좌표계, D 행 등식 — reference no_roll_moment 자리)
@@ -158,8 +159,8 @@ class CasadiCondensedMPC(ConvexMPC):
     def __init__(self, cfg, solver: str = "osqp", osqp_settings: dict | None = None,
                  verbose_errors: bool = True, foot_model: str = "ref"):
         super().__init__(cfg, solver=solver, osqp_settings=osqp_settings, verbose_errors=verbose_errors)
-        if foot_model not in ("ref", "line"):
-            raise ValueError(f"foot_model must be 'ref' or 'line', got {foot_model!r}")
+        if foot_model not in ("ref", "line", "mx0"):
+            raise ValueError(f"foot_model must be 'ref', 'line' or 'mx0', got {foot_model!r}")
         self.foot_model = foot_model
         self._step_map = build_step_function(self.dt).map(self.N)
         self._qk_map = build_qk_function().map(self.N)
@@ -222,7 +223,7 @@ class CasadiCondensedMPC(ConvexMPC):
             blk[swL, N_INEQ + i, i] = 1.0
         for i in (3, 4, 5, 9, 10, 11):
             blk[swR, N_INEQ + i, i] = 1.0
-        if self.foot_model == "line":                       # D: 디딤 발 mx^F = x̂_F·M_W = 0 (no_roll_moment 자리)
+        if self.foot_model in ("line", "mx0"):              # D: 디딤 발 mx^F = x̂_F·M_W = 0 (no_roll_moment 자리)
             blk[stance[:, 0], N_INEQ + 6, 6] = np.cos(yawL)
             blk[stance[:, 0], N_INEQ + 6, 7] = np.sin(yawL)
             blk[stance[:, 1], N_INEQ + 9, 9] = np.cos(yawR)

@@ -320,6 +320,12 @@ def compute_metrics(R: dict, cmd=(0.0, 0.0, 0.0), walk_t=None, lim=None, window=
         out["fric_pyr_p95"] = float(np.percentile(fr_p, 95))
     else:
         out["fric_cone_p95"] = out["fric_cone_max"] = out["fric_pyr_p95"] = np.nan
+    # 좌우 하중비 (명령 Fz 중앙값, 디딤·Fz > 20 N) — R/L. 1 이면 대칭 (Q&A 9/26 Q7)
+    fzs = []
+    for leg, iz in ((0, 2), (1, 5)):
+        m_ = win & (R["active"][:, leg] > 0.5) & (R["u"][:, iz] > 20.0)
+        fzs.append(float(np.median(R["u"][m_, iz])) if m_.any() else np.nan)
+    out["load_RL"] = fzs[1] / fzs[0] if fzs[0] and np.isfinite(fzs[0]) else np.nan
     if lim is not None:
         ratio = np.abs(R["tau"][win]) / lim[None, :]
         out["tau_ratio_max"] = float(ratio.max()) if ratio.size else np.nan
@@ -609,7 +615,8 @@ def main():
     ap.add_argument("--log", action="store_true")
     ap.add_argument("--variant", default=None)
     ap.add_argument("--fix", default="yawref", help="reference 특이점 고침 (기본 yawref — 빈 문자열로 끔): slide+yawref+yawanchor")
-    ap.add_argument("--foot", default="ref", choices=["ref", "line"], help="발 접촉 모델 (line = OA-MPC 선 접촉, 검증 전)")
+    ap.add_argument("--foot", default="ref", choices=["ref", "line", "mx0"],
+                    help="발 접촉 모델: ref (reference) / mx0 (+ mx=0 등식) / line (OA-MPC 선 접촉)")
     ap.add_argument("--rai", type=float, default=0.0, help="착지점 측정 속도 되먹임 K [s] (Q&A 9/26 Q8, 기본 0 = reference)")
     ap.add_argument("--xmax", type=float, default=None, help="명령 필터 전진 상한 [m/s] (기본 yaml 0.7)")
     a = ap.parse_args()
