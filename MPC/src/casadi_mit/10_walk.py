@@ -549,6 +549,7 @@ def view(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True,
          foot_model="ref", raibert_gain=0.0):
     import threading
     import mujoco.viewer
+    from viewer_hud import MitHUD
     cfg, model, ctl, walk_t = _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale,
                                      fsm_double_update, verbose=True, fixes=fixes, x_dot_max=x_dot_max,
                                      foot_model=foot_model, raibert_gain=raibert_gain)
@@ -558,6 +559,7 @@ def view(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True,
     before = set(threading.enumerate())
     with mujoco.viewer.launch_passive(m, d) as v:
         ui_threads = [t for t in threading.enumerate() if t not in before]
+        hud = MitHUD(m, model.base_body)
         if follow:
             v.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
             v.cam.trackbodyid = model.base_body
@@ -574,6 +576,8 @@ def view(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True,
             if _fell(d):
                 print(f"fell at t = {d.time:.2f}")
                 break
+            f = ctl.filtered
+            hud.update(v, d, d.time, k, cmd=(f.x_dot, f.y_dot, f.psi_dot), mode=ctl.fsm.state.value)
             if k % sync_every == 0:
                 with v.lock():
                     _draw_refs(v, ctl)                      # 참조 오버레이 (Q&A 9/26 Q7 후속 분석용)
