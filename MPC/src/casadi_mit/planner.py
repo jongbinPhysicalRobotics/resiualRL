@@ -258,8 +258,12 @@ class SwingFootPlanner:
     진단용 속성 (C++ 에 없음, 읽기만): stop_active, stop_just_activated, last_updated (2,) bool.
     """
 
-    def __init__(self, cfg, raibert_gain: float = 0.0, raibert_max: float = 0.10):
+    def __init__(self, cfg, raibert_gain: float = 0.0, raibert_max: float = 0.10,
+                 ypos_gain: float = 0.0, ypos_max: float = 0.05):
         self.cfg = cfg
+        self.ypos_gain = float(ypos_gain)            # 착지점 옆 '위치' 되먹임 Δy = k·e_y (MATLAB convex_mpc.m 0.3·y_com, MPC_NOTES §12-7)
+        self.ypos_max = float(ypos_max)
+        self.lat_err = 0.0                           # 컨트롤러가 매 틱 넣어 줌: CoM 의 경로선 기준 옆 이탈 [m] (+ = 왼쪽)
         self.raibert_gain = float(raibert_gain)      # 측정 속도 되먹임 Δp = K(v_meas − v_cmd) (Q&A 9/26 Q8, 기본 0 = reference)
         self.raibert_max = float(raibert_max)
         self.cycle, self.swing_time, self.stance_time, _, _, _ = timing_params(cfg)
@@ -400,6 +404,8 @@ class SwingFootPlanner:
                 corr = corr * (self.raibert_max / n_c)
             corr_B = _rzT_mul(yaw0, np.array([corr[0], corr[1], 0.0]))
             planned_B = planned_B + corr_B
+        if self.ypos_gain > 0.0:                  # 옆 위치 되먹임 (Q&A 9/27 Q2): 밀린 쪽으로 더 내딛기 (+부호)
+            planned_B[1] += min(max(self.ypos_gain * self.lat_err, -self.ypos_max), self.ypos_max)
         # 좌우 교차 방지 (lateral crossing guard)
         lat = float(off_B[1])
         if lat > 0.0:

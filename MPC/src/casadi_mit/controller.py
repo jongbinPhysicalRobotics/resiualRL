@@ -97,10 +97,14 @@ class MitController:
                  emulate_markers: bool = False, fsm_double_update: bool = True, friction_scale: float = 1.0,
                  osqp_settings: dict | None = None, verbose: bool = False, fixes=(), foot_model: str = "ref",
                  stand_yaw_hold: bool = True, stand_bias: bool = True, side_swap: bool = False,
-                 raibert_gain: float = 0.0):
+                 raibert_gain: float = 0.0, ypos_gain: float = 0.0, ypath: float = 0.0):
         self.fixes = set(fixes or ())
         self.foot_model = str(foot_model)
         self.raibert_gain = float(raibert_gain)
+        self.ypos_gain = float(ypos_gain)            # 착지 옆 위치 되먹임 (Q&A 9/27 Q2)
+        self.ypath = float(ypath)                    # MPC 참조 옆 위치를 경로선 쪽으로 (0 = reference 재고정, 1 = 경로선) (Q&A 9/27 Q2)
+        self.lat_err = 0.0
+        self.path_W = None                           # 명령 경로선 (걷기 시작 CoM 에서 명령 속도·목표 yaw 로 적분)
         self.side_swap = bool(side_swap)             # 걸음 위상 좌우 맞바꿈 (Q&A 9/26 Q7: 하중 쏠림은 위상 0 다리를 따라간다)
         self.stand_bias = bool(stand_bias)           # 서기에서 다리 자중 (qfrc_bias) 보상 — Q&A 9/26 Q6:
                                                      # 순수 Jᵀ wrench 는 다리 자중을 안 보상해 발이 평행하게 안으로 크리프 (60 s 에 65 mm)
@@ -150,7 +154,7 @@ class MitController:
         self.clock = HorizonClock(t, cfg)
         self.gait = GaitScheduler(cfg, self.clock, side_swap=self.side_swap)
         self.cm = ContactManager(cfg)
-        self.planner = SwingFootPlanner(cfg, raibert_gain=self.raibert_gain)
+        self.planner = SwingFootPlanner(cfg, raibert_gain=self.raibert_gain, ypos_gain=self.ypos_gain)
         self.mpc = CasadiCondensedMPC(cfg, solver=self.solver_name, osqp_settings=self.osqp_settings or None,
                                       verbose_errors=self.verbose, foot_model=self.foot_model)
         tr = cfg.locomotion_transition
@@ -304,6 +308,10 @@ class MitController:
                 seed[5] = self.body.nominal_height_W
                 if "yawref" in self.fixes:                         # 변형: 방향 유지 (reference 는 x0 yaw)
                     seed[2] = self.body.euler_W[2]
+                if self.ypath > 0.0:                               # 변형: 옆 위치 참조를 경로선 쪽으로 (Q&A 9/27 Q2)
+                    psi_t = float(self.body.euler_W[2])
+                    seed[3] -= self.ypath * self.lat_err * (-np.sin(psi_t))
+                    seed[4] -= self.ypath * self.lat_err * np.cos(psi_t)
             ref = build_reference(self.filtered.copy(), seed, desired, self.clock, self.cfg)
             self.last_ref = ref                                # 뷰어 오버레이용 (10_walk._draw_refs)
             u0, info = self.mpc.solve(x0, ref, steps, foot_yaw, state.reduced, self.mode, active=active)
@@ -383,7 +391,19 @@ class MitController:
             self.planner.set_body_yaw_target(state.yaw_unwrapped if "yawanchor" in self.fixes else self.body.euler_W[2])
         if self.mode == "standing":                                # 8
             nominal = standing_foot_targets(state.foot_pos_W)
+            self.path_W = None
         else:
+            # 명령 경로선 + CoM 옆 이탈 (Q&A 9/27 Q2, ypos 용): 경로 += Rz(ψ_목표)·[ẋ, ẏ]·dt
+            psi_t = float(self.body.euler_W[2])
+            c_, s_ = np.cos(psi_t), np.sin(psi_t)
+            if self.path_W is None:
+                self.path_W = x0[3:5].copy()
+            else:
+                vx_, vy_ = float(self.filtered.x_dot), float(self.filtered.y_dot)
+                self.path_W = self.path_W + dt * np.array([c_ * vx_ - s_ * vy_, s_ * vx_ + c_ * vy_])
+            dxy = x0[3:5] - self.path_W
+            self.lat_err = float(-s_ * dxy[0] + c_ * dxy[1])      # heading 왼쪽 성분 (+ = 경로선 왼쪽)
+            self.planner.lat_err = self.lat_err
             nominal = self.planner.desired_foot_positions(state, x0, self.clock, self.gait, self.filtered, t)
         self.cm.update(state, self.gait, self.mode, nominal, t)   # 9
         desired = self.cm.managed_foot_positions(nominal)          # 10
