@@ -37,7 +37,7 @@ GAIT_ON=1 .venv/bin/python MPC/src/casadi_mit/13_foot_diag.py --vx 0.65 --profil
 `rai=0.2` (착지 측정속도, 9/26 Q8), `ypath=0.3` (옆 경로선, 9/27 Q2), `fix=slide+yawref` (9/27 Q3),
 `armsw=k` (팔 반대 흔들기 rad/m), `cop=a` (MPC CoP 앞뒤 한계), `wmom=w` (발 모멘트 입력 가중치),
 `qpitch/qyaw/qroll=w` (걷기 자세 가중치) — 9/28 Q1. 모두 기본값 = 기존 동작.
-풀이기 (9/28 Q5): `admm=N` (논문식 고정 반복 ADMM, ρ 고정 · 판정 / 재시도 없음), `init=nominal|warm|zero`, `rho=ρ` (OSQP ρ, 기본 0.1 — 이 문제엔 1e-5 가 맞다).
+풀이기 (9/28 Q5): `admm=N` (논문식 고정 반복 ADMM, ρ 고정 · 판정 / 재시도 없음), `init=nominal|warm|hold|zero` (hold = 당기지 않는 warm — 9/28 Q8 에서 warm 보다 나쁨), `rho=ρ` (OSQP ρ, 기본 0.1 — 이 문제엔 1e-5 가 맞다).
 회전 (9/28 Q6): `yawlead=s` (착지 yaw 선행 배율, 기본 1.0 — 0 이면 정확해도 회전 완주), `yawhold=0|1`, `cone=pyramidal|elliptic` (시뮬 마찰 원뿔).
 검증 이력·비교 도구는 mit 폴더 (`15_casadi_check.py`, `12_ref_diff.py`) 에 있다.
 
@@ -45,6 +45,10 @@ GAIT_ON=1 .venv/bin/python MPC/src/casadi_mit/13_foot_diag.py --vx 0.65 --profil
 
 - 걷기 0.6 m/s 20 s: 추종 85.2 %, fallback 0 (120 s 는 CasADi 판으로 84.5 % — 9/26 Q2 §2)
 - 서기 (GAIT_ON=0) 10 s: vx 0.001 m/s, roll σ 0.0002 rad
+
+## 현재 후보 설정 (9/28 Q8, 기본값 아님 — 렌더 확인 대기)
+
+`--rai 0.2 --ypath 0.3 --var rho=1e-5,init=warm,admm=25,khalf=0.37,yawlead=0.5` — 0.6 / 0.65 / 0.7 전진 · 옆 0.3 · 회전 1.3 모두 120 s 완주 (실측 0.69 m/s), 풀이 고정 25 회.
 
 ## 알려진 문제 (이어받은 것)
 

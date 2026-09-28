@@ -436,8 +436,8 @@ class ConvexMPC:
         # (Jeon et al. T-RO 2026 III-B·C, Alg. 1: N_QP = 25, 초기 추정 = 공칭). 0 = reference 방식 (기본).
         self.fixed_iter = int(opts.pop("fixed_iter", 0) or 0)
         self.init_mode = str(opts.pop("init", "nominal"))
-        if self.init_mode not in ("nominal", "warm", "zero"):
-            raise ValueError(f"init must be nominal / warm / zero, got {self.init_mode!r}")
+        if self.init_mode not in ("nominal", "warm", "hold", "zero"):
+            raise ValueError(f"init must be nominal / warm / hold / zero, got {self.init_mode!r}")
         if opts:
             self.settings.update(opts)
         if self.fixed_iter > 0:
@@ -646,7 +646,9 @@ class ConvexMPC:
     def _solve_fixed(self, Px, q, Ax, l, u, sig, stance, mass, info):
         """논문식 고정 반복 ADMM (Q&A 9/28 Q5). 패턴이 고정이라 접촉이 바뀌어도 workspace 를 유지하고 값만 갱신한다.
         init: nominal = 디딤 발마다 Fz = m|g| / 디딤 발 수, 나머지 0 (논문 f_init 대응), 쌍대 0
-              warm    = 이전 해를 한 스텝 당긴 값 (쌍대는 workspace 에 남은 값)
+              warm    = 이전 해를 한 스텝 당긴 값 (쌍대는 workspace 에 남은 값) — reference updateWarmStart
+              hold    = 이전 해 그대로 (당기지 않음). slide 없이는 주기 안에서 격자가 안 움직이고, 주기가 넘어가도
+                        다음 주기의 접촉 패턴이 같다 (주기 걸음) — 당기면 20 ms 어긋난다 (Q&A 9/28 Q8)
               zero    = 전부 0
         N 회 뒤의 반복값을 그대로 쓴다 (수렴 여부 무관). 반복값이 비유한일 때만 예외 → 상위에서 fallback."""
         info["sig_changed"] = self._has_sig and sig != self._sig
@@ -660,6 +662,8 @@ class ConvexMPC:
         self._sig, self._has_sig = sig, True
         if self.init_mode == "warm" and self._has_prev and np.all(np.isfinite(self._warm)):
             self._solver.warm_start(x=self._warm)
+        elif self.init_mode == "hold" and self._has_prev and np.all(np.isfinite(self._last_solution)):
+            self._solver.warm_start(x=self._last_solution)
         else:
             x_init = np.zeros(self.nv)
             if self.init_mode == "nominal":
