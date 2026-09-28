@@ -39,9 +39,7 @@ from mpc import (ConvexMPC, NX, NU, N_INEQ, N_EQ, LEFT_MAP, RIGHT_MAP,
                  lift, resolved_foot_yaw, yaw_state_cost, _cfg)
 
 
-# ---------------------------------------------------------------------------
 # 기호식 빌더
-# ---------------------------------------------------------------------------
 def _rz(psi):
     c, s = ca.cos(psi), ca.sin(psi)
     return ca.vertcat(ca.horzcat(c, -s, 0), ca.horzcat(s, c, 0), ca.horzcat(0, 0, 1))
@@ -119,8 +117,10 @@ def line_foot_template(cfg) -> np.ndarray:
 
 _REF_UNIT_COLS = [[0, 1, 2], [0, 1, 2], [0, 1, 2], [0, 1, 2], [2], [2],
                   [2, 3, 4], [2, 3, 4], [2, 3, 4], [2, 3, 4], [2, 5], [2, 5]]
+# 월드 좌표 열 패턴 (발 yaw 로 회전한 뒤 기준). ⚠ 9/28 Q10 수정: 전에는 발 좌표 열 ([2,4], [1,2,4,5]) 만 적어
+# yaw ≠ 0 에서 Fx · Mx 성분 (회전으로 섞여 들어오는 값) 이 OSQP 행렬에서 빠졌다 — quadprog (dense) 만 맞았다.
 _LINE_UNIT_COLS = [[0, 1, 2], [0, 1, 2], [0, 1, 2], [0, 1, 2], [2], [2],
-                   [2, 4], [2, 4], [1, 2, 4, 5], [1, 2, 4, 5], [1, 2, 4, 5], [1, 2, 4, 5]]
+                   [2, 3, 4], [2, 3, 4], [0, 1, 2, 3, 4, 5], [0, 1, 2, 3, 4, 5], [0, 1, 2, 3, 4, 5], [0, 1, 2, 3, 4, 5]]
 
 
 def row_level_pattern(steps: int, unit_cols):
@@ -204,19 +204,28 @@ class CasadiCondensedMPC(ConvexMPC):
         q = 2.0 * (B_qp.T @ we)
         return H, q
 
+    def _rot_steps(self, yaws):
+        """스텝별 yaw (N,) → (N,12,6) 회전된 제약 블록. 모두 같으면 한 번만 계산 (reference 경로와 같은 값)."""
+        if np.all(yaws == yaws[0]):
+            return np.array(self._rot_fn(yaws[0]))[None].repeat(len(yaws), 0)
+        return np.stack([np.array(self._rot_fn(v)) for v in yaws])
+
     def build_constraints(self, steps, foot_yaw):
         n = self.N
         stance = np.array([np.asarray(s.stance, dtype=bool) for s in steps]).reshape(n, 2)
         min_scale = np.clip(np.array([np.asarray(s.min_scale, dtype=float) for s in steps]).reshape(n, 2), 0.0, 1.0)
-        yawL = resolved_foot_yaw(foot_yaw[0])
-        yawR = resolved_foot_yaw(foot_yaw[1])
-        CWL = np.array(self._rot_fn(yawL))
-        CWR = np.array(self._rot_fn(yawR))
+        fy = np.asarray(foot_yaw, dtype=float)
+        if fy.ndim == 1:                                     # reference: 다리당 yaw 하나
+            fy = np.tile(fy.reshape(1, 2), (n, 1))
+        yawL = np.array([resolved_foot_yaw(v) for v in fy[:, 0]])   # (N,) — 변형 foot2 는 스텝별 (Q&A 9/28 Q10)
+        yawR = np.array([resolved_foot_yaw(v) for v in fy[:, 1]])
+        CWL = self._rot_steps(yawL)
+        CWR = self._rot_steps(yawR)
         blk = np.zeros((n, N_INEQ + N_EQ, NU))
         sL = stance[:, 0].astype(float)[:, None, None]
         sR = stance[:, 1].astype(float)[:, None, None]
-        blk[:, 0:12, LEFT_MAP] = CWL[None] * sL
-        blk[:, 12:24, RIGHT_MAP] = CWR[None] * sR
+        blk[:, 0:12, LEFT_MAP] = CWL * sL
+        blk[:, 12:24, RIGHT_MAP] = CWR * sR
         swL = ~stance[:, 0]
         swR = ~stance[:, 1]
         for i in (0, 1, 2, 6, 7, 8):                        # D: 스윙 발 변수 = 0
@@ -224,10 +233,10 @@ class CasadiCondensedMPC(ConvexMPC):
         for i in (3, 4, 5, 9, 10, 11):
             blk[swR, N_INEQ + i, i] = 1.0
         if self.foot_model in ("line", "mx0"):              # D: 디딤 발 mx^F = x̂_F·M_W = 0 (no_roll_moment 자리)
-            blk[stance[:, 0], N_INEQ + 6, 6] = np.cos(yawL)
-            blk[stance[:, 0], N_INEQ + 6, 7] = np.sin(yawL)
-            blk[stance[:, 1], N_INEQ + 9, 9] = np.cos(yawR)
-            blk[stance[:, 1], N_INEQ + 9, 10] = np.sin(yawR)
+            blk[stance[:, 0], N_INEQ + 6, 6] = np.cos(yawL[stance[:, 0]])
+            blk[stance[:, 0], N_INEQ + 6, 7] = np.sin(yawL[stance[:, 0]])
+            blk[stance[:, 1], N_INEQ + 9, 9] = np.cos(yawR[stance[:, 1]])
+            blk[stance[:, 1], N_INEQ + 9, 10] = np.sin(yawR[stance[:, 1]])
         ub_ineq = np.zeros((n, N_INEQ))
         ub_ineq[stance[:, 0], 4] = self.fz_max
         ub_ineq[:, 5] = np.where(stance[:, 0], -min_scale[:, 0] * self.fz_min, 0.0)

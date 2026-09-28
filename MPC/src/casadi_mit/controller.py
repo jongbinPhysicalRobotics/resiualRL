@@ -60,7 +60,8 @@ from leg_control import arm_pd, standing_torque, stance_yaw_hold_moment_z, swing
 from mit_model import LEFT, RIGHT, Rz
 from mpc import build_reference, mpc_foot_yaw
 from mpc_casadi import CasadiCondensedMPC
-from planner import (BodyTarget, SwingFootPlanner, SwingFootTrajectory, planar_speed, standing_foot_targets,
+from planner import (BodyTarget, SwingFootPlanner, SwingFootTrajectory, half_stance_preview_time, planar_speed,
+                     standing_foot_targets,
                      swing_foot_yaw_psi_offset, swing_foot_yaw_target_world, yaw_with_psi_offset)
 
 LEGS = (LEFT, RIGHT)
@@ -112,7 +113,7 @@ class MitController:
                                                      # 순수 Jᵀ wrench 는 다리 자중을 안 보상해 발이 평행하게 안으로 크리프 (60 s 에 65 mm)
         self.stand_yaw_hold = bool(stand_yaw_hold)   # 서기에서도 발 yaw hold (reference C++ 엔 없음 — Q&A 9/26 Q6:
                                                      # 서기는 관절 PD 가 없어 hip yaw 가 자유 내부 자유도 → 60 s 에 발 뒤꿈치가 140 mm 모임)
-        unknown = self.fixes - {"slide", "yawref", "yawanchor"}
+        unknown = self.fixes - {"slide", "yawref", "yawanchor", "foot2"}
         if unknown:
             raise ValueError(f"unknown fixes {sorted(unknown)}")
         self.model = model
@@ -315,6 +316,8 @@ class MitController:
                     seed[3] -= self.ypath * self.lat_err * (-np.sin(psi_t))
                     seed[4] -= self.ypath * self.lat_err * np.cos(psi_t)
             ref = build_reference(self.filtered.copy(), seed, desired, self.clock, self.cfg)
+            if "foot2" in self.fixes and self.mode == "walking":      # 변형: 지평 안 두 번째 착지 (Q&A 9/28 Q10)
+                foot_yaw = self._second_footholds(ref, steps, foot_yaw)
             self.last_ref = ref                                # 뷰어 오버레이용 (10_walk._draw_refs)
             u0, info = self.mpc.solve(x0, ref, steps, foot_yaw, state.reduced, self.mode, active=active)
             info["x_ref0"] = ref.X_ref[0].copy()
@@ -334,6 +337,44 @@ class MitController:
         info["mode"] = self.mode
         self.last_info = info
         return info
+
+    def _second_footholds(self, ref, steps, foot_yaw):
+        """변형 'foot2' (Q&A 9/28 Q10): reference 는 다리당 발 위치 하나를 지평 전체에 쓴다 (RT:65-66).
+        지평 (0.5 s) = 한 주기라 디딤 발은 지평 안에서 들렸다가 다시 착지하는데, 그 입각도 지금 위치 (몸 뒤) 로 계산된다.
+        각 다리의 입각 구간을 세어 두 번째 이후 구간에 착지점 규칙으로 예측한 위치 · yaw 를 넣는다:
+          이륙 스텝 k_lo 의 참조 CoM p, yaw ψ 에서  p + Rz(ψ + ½ψ̇Tp)·v_B·Tp + Rz(ψ + ψ̇·T_sw)·off_B   (planner.touchdown_target 와 같은 식,
+          rai · ypos 되먹임은 미래 측정값을 모르므로 뺀다),  yaw = ψ + lead·ψ̇·Tp + psi_offset.
+        ref.r 를 제자리에서 바꾸고 (N,2) 발 yaw 를 돌려준다."""
+        cfg = self.cfg
+        S = np.array([s.stance for s in steps], dtype=bool)
+        n = S.shape[0]
+        f = self.filtered
+        v_B = np.array([float(f.x_dot), float(f.y_dot), 0.0])
+        psi_dot = float(f.psi_dot)
+        Tp = half_stance_preview_time(planar_speed(f.x_dot, f.y_dot), cfg)
+        T_sw = float(cfg.timing.swing)
+        yaw_tab = np.tile(np.asarray(foot_yaw, dtype=float), (n, 1))
+        for leg in LEGS:
+            seg = 0 if S[0, leg] else -1          # 입각 구간 번호: 지금 입각이면 0 (지금 위치), 스윙이면 첫 착지가 0 (계획 착지점)
+            k_lo = None
+            for k in range(1, n):
+                if S[k - 1, leg] and not S[k, leg]:
+                    k_lo = k
+                if S[k, leg] and not S[k - 1, leg]:
+                    seg += 1
+                if seg >= 1 and S[k, leg] and k_lo is not None:
+                    if not S[k - 1, leg]:        # 새 입각 시작 → 예측 착지점 계산
+                        p = ref.X_ref[max(k_lo - 1, 0), 3:6]
+                        psi = float(ref.psi[max(k_lo - 1, 0)])
+                        off = self.planner.nominal_offsets_B[leg]
+                        step = Rz(psi + 0.5 * psi_dot * Tp) @ v_B * Tp
+                        foot = p + step + Rz(psi + psi_dot * T_sw) @ off
+                        foot[2] = ref.r[0, leg, 2] + ref.X_ref[0, 5]              # 지면 높이 = 지금 목표 발 z
+                        yaw2 = yaw_with_psi_offset(psi_dot, leg, swing_foot_yaw_target_world(
+                            psi, psi_dot, planar_speed(f.x_dot, f.y_dot), cfg))
+                    ref.r[k, leg] = foot - ref.X_ref[k, 3:6]
+                    yaw_tab[k, leg] = yaw2
+        return yaw_tab
 
     # ------------------------------------------------------------------------------------------------------------
     # 다리 명령 (MC:1254-1372)
