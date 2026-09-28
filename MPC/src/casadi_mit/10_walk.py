@@ -131,6 +131,12 @@ def parse_variant(s: str | None) -> dict:
             kw["w_moment"] = float(v)
         elif k in ("qpitch", "qyaw", "qroll"):     # MPC 걷기 상태 가중치 (기본 yaml 9000 / 500 / 50000 — Q&A 9/28)
             kw.setdefault("q_state", {})[{"qroll": 0, "qpitch": 1, "qyaw": 2}[k]] = float(v)
+        elif k == "cone":                          # 시뮬 마찰 원뿔: pyramidal (MuJoCo 기본, 마름모) / elliptic (원) — Q&A 9/28 Q6
+            kw["sim_cone"] = str(v)
+        elif k == "yawhold":                       # 걷기 디딤 발 yaw hold (MPC 밖 Mz, 기본 yaml 1) — Q&A 9/28 Q6
+            kw["yaw_hold"] = bool(int(v))
+        elif k == "yawlead":                       # 착지 yaw 선행 배율 swing_foot_yaw_lead_scale (기본 1.0) — Q&A 9/28 Q6
+            kw["yaw_lead"] = float(v)
         elif k == "mpcmu":                         # MPC 제약의 µ (기본 yaml 1.0). 시뮬 마찰 (mu=) 과 별개. µ_t = 0.0657·µ 도 따라감
             kw["mpc_mu"] = float(v)
         else:
@@ -403,15 +409,20 @@ def _tag(vx, vy, wz, variant):
 
 def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale, fsm_double_update, verbose,
            osqp_settings=None, fixes=(), x_dot_max=None, k_half=None, foot_model="ref", mpc_mu=None,
-           stand_yaw_hold=True, stand_bias=True, side_swap=False, raibert_gain=0.0, ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None):
+           stand_yaw_hold=True, stand_bias=True, side_swap=False, raibert_gain=0.0, ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None, sim_cone=None, yaw_hold=None,
+           yaw_lead=None):
     cfg = config.load()
     if (x_dot_max is not None or k_half is not None or mpc_mu is not None or cop_half is not None or w_moment is not None
-            or q_state):
+            or q_state or yaw_hold is not None or yaw_lead is not None):
         raw = cfg.to_dict()
         if cop_half is not None:                  # MPC CoP 앞뒤 한계 (기본 yaml 0.065, 실제 선 ±0.075) — Q&A 9/28
             raw["mpc"]["foot_half_length"] = float(cop_half)
         if w_moment is not None:                  # 걷기 입력 가중치의 발 모멘트 (Mx, My, Mz ×2) — Q&A 9/28
             raw["mpc"]["walking"]["input_weight_diag"][6:12] = [float(w_moment)] * 6
+        if yaw_hold is not None:                  # 걷기 디딤 발 yaw hold (MPC 밖 Mz) — Q&A 9/28 Q6
+            raw["swing"]["enable_stance_foot_yaw_hold"] = bool(yaw_hold)
+        if yaw_lead is not None:                  # 착지 yaw 선행 배율 — Q&A 9/28 Q6
+            raw["swing"]["swing_foot_yaw_lead_scale"] = float(yaw_lead)
         for i, w in (q_state or {}).items():      # 걷기 상태 가중치 (roll 0 / pitch 1 / yaw 2) — Q&A 9/28
             raw["mpc"]["walking"]["state_weight_diag"][i] = float(w)
         if mpc_mu is not None:                    # MPC 마찰 제약 µ 변형 (기본 = yaml 1.0, Q&A 9/26 Q4)
@@ -424,6 +435,9 @@ def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale
                 raw["swing"][key] = float(k_half)
         cfg = config.MitConfig(raw)
     model = MitModel(armature=armature, emulate_debug_markers=markers)
+    if sim_cone is not None:                      # 시뮬 마찰 원뿔 (MuJoCo 기본 pyramidal) — Q&A 9/28 Q6
+        model.m.opt.cone = {"pyramidal": mujoco.mjtCone.mjCONE_PYRAMIDAL,
+                            "elliptic": mujoco.mjtCone.mjCONE_ELLIPTIC}[sim_cone]
     model.reset(str(cfg.port.spawn_keyframe))
     walk_t = float(cfg.startup.post_init_standing_settle_time)
     sched = make_schedule(profile, vx, vy, wz, walk_t)
@@ -447,7 +461,8 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
              markers=False, stand=False, friction_scale=1.0, fsm_double_update=True, osqp_settings=None, log=False,
              variant=None, verbose=True, print_every=10.0, keep_record=False, fixes=(), x_dot_max=None, k_half=None,
              foot_model="ref", mpc_mu=None, stand_yaw_hold=True, stand_bias=True, side_swap=False, raibert_gain=0.0,
-             ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None):
+             ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None, sim_cone=None,
+             yaw_hold=None, yaw_lead=None):
     """walking seconds 동안 (시뮬 = settle + seconds). 반환 dict (metrics + fell 등)."""
     cfg, model, ctl, walk_t = _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale,
                                      fsm_double_update, verbose=False, osqp_settings=osqp_settings, fixes=fixes,
@@ -455,7 +470,7 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
                                      stand_yaw_hold=stand_yaw_hold, stand_bias=stand_bias, side_swap=side_swap,
                                      raibert_gain=raibert_gain, ypos_gain=ypos_gain, ypath=ypath,
                                      arm_swing=arm_swing, cop_half=cop_half, w_moment=w_moment,
-                                     q_state=q_state)
+                                     q_state=q_state, sim_cone=sim_cone, yaw_hold=yaw_hold, yaw_lead=yaw_lead)
     m, d = model.m, model.d
     total = (0.0 if stand else walk_t) + seconds
     n = int(round(total / m.opt.timestep))
