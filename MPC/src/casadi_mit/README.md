@@ -34,6 +34,7 @@ GAIT_ON=1 .venv/bin/python MPC/src/casadi_mit/13_foot_diag.py --vx 0.65 --profil
 `rai=0.2` (착지 측정속도, 9/26 Q8), `ypath=0.3` (옆 경로선, 9/27 Q2), `fix=slide+yawref` (9/27 Q3),
 `armsw=k` (팔 반대 흔들기 rad/m), `cop=a` (MPC CoP 앞뒤 한계), `wmom=w` (발 모멘트 입력 가중치),
 `qpitch/qyaw/qroll=w` (걷기 자세 가중치) — 9/28 Q1. 모두 기본값 = 기존 동작.
+풀이기 (9/28 Q5): `admm=N` (논문식 고정 반복 ADMM, ρ 고정 · 판정 / 재시도 없음), `init=nominal|warm|zero`, `rho=ρ` (OSQP ρ, 기본 0.1 — 이 문제엔 1e-5 가 맞다).
 검증 이력·비교 도구는 mit 폴더 (`15_casadi_check.py`, `12_ref_diff.py`) 에 있다.
 
 ## 기준 수치 (측정, 이 폴더 기본 설정)

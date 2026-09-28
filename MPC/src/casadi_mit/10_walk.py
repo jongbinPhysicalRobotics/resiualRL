@@ -97,6 +97,12 @@ def parse_variant(s: str | None) -> dict:
             kw["fsm_double_update"] = bool(int(v))
         elif k == "fix":                           # reference 특이점 고침 (controller.py fixes): fix=slide+yawref
             kw["fixes"] = tuple(x for x in v.split("+") if x)
+        elif k == "admm":                          # 논문식 고정 반복 ADMM N 회 (ρ 고정, 종료 판정 · 재시도 없음 — Q&A 9/28 Q5)
+            kw.setdefault("osqp_settings", {})["fixed_iter"] = int(v)
+        elif k == "init":                          # 고정 반복의 초기 추정: nominal (논문) / warm / zero
+            kw.setdefault("osqp_settings", {})["init"] = str(v)
+        elif k == "rho":                           # OSQP ρ (기본 0.1)
+            kw.setdefault("osqp_settings", {})["rho"] = float(v)
         elif k == "dualgap":                       # OSQP check_dualgap (이식 0, reference 실효 1 — Q&A 9/25 Q11)
             kw.setdefault("osqp_settings", {})["check_dualgap"] = int(v)
         elif k == "xmax":                          # 명령 필터 전진 상한 (reference 0.7) — 1 m/s 시험 (Q&A 9/25 Q9)

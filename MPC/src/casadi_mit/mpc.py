@@ -114,9 +114,8 @@ def skew_batch(v: np.ndarray) -> np.ndarray:
     return S
 
 
-# ---------------------------------------------------------------------------
-# Reference trajectory  (ReferenceTrajectory.cpp:8-83, spec 03 §4.3)
-# ---------------------------------------------------------------------------
+
+# Reference trajectory 
 @dataclass
 class RefOut:
     X_ref: np.ndarray      # (N,13)  행 k ↔ x_{k+1}
@@ -432,8 +431,17 @@ class ConvexMPC:
                              sigma=1e-6, alpha=1.6, scaling=10, check_termination=25,
                              scaled_termination=0, delta=1e-6, adaptive_rho_tolerance=5.0,
                              adaptive_rho_fraction=0.4)
-        if osqp_settings:
-            self.settings.update(osqp_settings)
+        opts = dict(osqp_settings or {})
+        # 변형 (Q&A 9/28 Q5): Residual MPC 논문식 풀이 — ρ 고정 · 반복 N 회 고정 · 종료 판정 / 재시도 / fallback 없음
+        # (Jeon et al. T-RO 2026 III-B·C, Alg. 1: N_QP = 25, 초기 추정 = 공칭). 0 = reference 방식 (기본).
+        self.fixed_iter = int(opts.pop("fixed_iter", 0) or 0)
+        self.init_mode = str(opts.pop("init", "nominal"))
+        if self.init_mode not in ("nominal", "warm", "zero"):
+            raise ValueError(f"init must be nominal / warm / zero, got {self.init_mode!r}")
+        if opts:
+            self.settings.update(opts)
+        if self.fixed_iter > 0:
+            self.settings.update(max_iter=self.fixed_iter, adaptive_rho=0, check_termination=0, polishing=False)
         self.verbose_errors = verbose_errors
         self.reset()
 
@@ -533,7 +541,10 @@ class ConvexMPC:
             if self.solver_name == "osqp":
                 Px = H[self._P_rows, self._P_cols]
                 Ax = blk.reshape(-1)[self._A_gather]
-                U = self._solve_osqp(Px, q, Ax, l, u, sig, info)
+                if self.fixed_iter > 0:
+                    U = self._solve_fixed(Px, q, Ax, l, u, sig, stance, float(reduced.mass), info)
+                else:
+                    U = self._solve_osqp(Px, q, Ax, l, u, sig, info)
             else:
                 U = self._solve_quadprog(H, q, blk, u, sig, info)
             info["solve_ms"] = (time.perf_counter() - t_solve) * 1e3
@@ -630,6 +641,47 @@ class ConvexMPC:
         self._update_warm_start()
         self._has_prev = True
         self._skip_warm = False
+        return U
+
+    def _solve_fixed(self, Px, q, Ax, l, u, sig, stance, mass, info):
+        """논문식 고정 반복 ADMM (Q&A 9/28 Q5). 패턴이 고정이라 접촉이 바뀌어도 workspace 를 유지하고 값만 갱신한다.
+        init: nominal = 디딤 발마다 Fz = m|g| / 디딤 발 수, 나머지 0 (논문 f_init 대응), 쌍대 0
+              warm    = 이전 해를 한 스텝 당긴 값 (쌍대는 workspace 에 남은 값)
+              zero    = 전부 0
+        N 회 뒤의 반복값을 그대로 쓴다 (수렴 여부 무관). 반복값이 비유한일 때만 예외 → 상위에서 fallback."""
+        info["sig_changed"] = self._has_sig and sig != self._sig
+        if not self._initialized:
+            self._init_solver(Px, q, Ax, l, u)
+            info["cold"] = True
+            self.stats["cold"] += 1
+        else:
+            self._solver.update(q=q, l=l, u=u, Px=Px, Ax=Ax)
+        self._Px, self._q, self._Ax, self._l, self._u = Px, q, Ax, l, u
+        self._sig, self._has_sig = sig, True
+        if self.init_mode == "warm" and self._has_prev and np.all(np.isfinite(self._warm)):
+            self._solver.warm_start(x=self._warm)
+        else:
+            x_init = np.zeros(self.nv)
+            if self.init_mode == "nominal":
+                st = np.asarray(stance, dtype=bool).reshape(self.N, 2)
+                n_st = st.sum(1)
+                fz = np.where(n_st > 0, mass * abs(self.gravity) / np.maximum(n_st, 1), 0.0)
+                X = x_init.reshape(self.N, NU)
+                X[:, 2] = np.where(st[:, 0], fz, 0.0)
+                X[:, 5] = np.where(st[:, 1], fz, 0.0)
+            self._solver.warm_start(x=x_init, y=np.zeros(self.nc))
+        res = self._solver.solve(raise_error=False)
+        info["iters"] = int(res.info.iter)
+        info["status"] = str(res.info.status)
+        info["status_val"] = int(res.info.status_val)
+        info["prim_res"] = float(res.info.prim_res)
+        info["dual_res"] = float(res.info.dual_res)
+        U = None if res.x is None else np.array(res.x, dtype=float, copy=True)
+        if U is None or U.shape != (self.nv,) or not np.all(np.isfinite(U)):
+            raise MpcSolveError("fixed-iteration ADMM returned an invalid iterate")
+        self._last_solution = U.copy()
+        self._update_warm_start()
+        self._has_prev = True
         return U
 
     def _update_warm_start(self):
