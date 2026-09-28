@@ -23,12 +23,17 @@ PYGLFW_LIBRARY_VARIANT=x11 .venv/bin/python MPC/src/casadi_mit/10_walk.py --view
 GAIT_ON=0 PYGLFW_LIBRARY_VARIANT=x11 .venv/bin/python MPC/src/casadi_mit/10_walk.py --view
 # 헤드리스 120 s 판정
 .venv/bin/python MPC/src/casadi_mit/10_walk.py --vx 0.6 --seconds 120
+# 입각 발 진단 (뒤꿈치 회전 · CoP 포화 · 한 점 접촉 — 9/28 Q1)
+GAIT_ON=1 .venv/bin/python MPC/src/casadi_mit/13_foot_diag.py --vx 0.65 --profile
 # 표 (세 목표)
 .venv/bin/python MPC/src/casadi_mit/11_gait_quality.py --cmd 0.6,0,0 0,0.3,0 0,0,1.3 \
     --var "profile=ramp,fix=yawref" --seconds 120
 ```
 
-변형 키 (`--var "k=v,k=v"`): mit 폴더와 동일 + `foot=line`, `khalf=0.37`, `xmax=1.0`.
+변형 키 (`--var "k=v,k=v"`): mit 폴더와 동일 + `foot=line|mx0`, `khalf=0.37`, `xmax=1.0`,
+`rai=0.2` (착지 측정속도, 9/26 Q8), `ypath=0.3` (옆 경로선, 9/27 Q2), `fix=slide+yawref` (9/27 Q3),
+`armsw=k` (팔 반대 흔들기 rad/m), `cop=a` (MPC CoP 앞뒤 한계), `wmom=w` (발 모멘트 입력 가중치),
+`qpitch/qyaw/qroll=w` (걷기 자세 가중치) — 9/28 Q1. 모두 기본값 = 기존 동작.
 검증 이력·비교 도구는 mit 폴더 (`15_casadi_check.py`, `12_ref_diff.py`) 에 있다.
 
 ## 기준 수치 (측정, 이 폴더 기본 설정)
@@ -38,5 +43,6 @@ GAIT_ON=0 PYGLFW_LIBRARY_VARIANT=x11 .venv/bin/python MPC/src/casadi_mit/10_walk
 
 ## 알려진 문제 (이어받은 것)
 
-속도 벽 0.6 m/s (9/25 Q10·9/26 Q1 — k_half 고정으로도 벽 유지, 원인 미확인),
+속도 벽 0.6 m/s (9/25 Q10·9/26 Q1 — k_half 고정으로도 벽 유지). 9/28 Q1: slide+rai+ypath 로 0.65 까지 완주, 0.675 에서 발 pitch
+구름으로 전도 — MPC 가 CoP 를 입각의 절반 이상 발 끝에 붙임 (다리 운동량 미모델 가설, 아핀항 후보),
 매 걸음 early contact ~20 ms (설계상 −5 mm 착지 목표), O1 (주기 원점 접촉표).

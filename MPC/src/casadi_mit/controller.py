@@ -97,12 +97,14 @@ class MitController:
                  emulate_markers: bool = False, fsm_double_update: bool = True, friction_scale: float = 1.0,
                  osqp_settings: dict | None = None, verbose: bool = False, fixes=(), foot_model: str = "ref",
                  stand_yaw_hold: bool = True, stand_bias: bool = True, side_swap: bool = False,
-                 raibert_gain: float = 0.0, ypos_gain: float = 0.0, ypath: float = 0.0):
+                 raibert_gain: float = 0.0, ypos_gain: float = 0.0, ypath: float = 0.0, arm_swing: float = 0.0):
         self.fixes = set(fixes or ())
         self.foot_model = str(foot_model)
         self.raibert_gain = float(raibert_gain)
         self.ypos_gain = float(ypos_gain)            # 착지 옆 위치 되먹임 (Q&A 9/27 Q2)
         self.ypath = float(ypath)                    # MPC 참조 옆 위치를 경로선 쪽으로 (0 = reference 재고정, 1 = 경로선) (Q&A 9/27 Q2)
+        self.arm_swing = float(arm_swing)            # 팔 반대 흔들기 k [rad/m] (0 = reference 고정 팔) (Q&A 9/28):
+                                                     # 어깨 pitch = ±k·(x_R − x_L) — 스윙 다리의 수직축 각운동량을 팔이 상쇄
         self.lat_err = 0.0
         self.path_W = None                           # 명령 경로선 (걷기 시작 CoM 에서 명령 속도·목표 yaw 로 적분)
         self.side_swap = bool(side_swap)             # 걸음 위상 좌우 맞바꿈 (Q&A 9/26 Q7: 하중 쏠림은 위상 0 다리를 따라간다)
@@ -411,7 +413,17 @@ class MitController:
         info = self._maybe_update_mpc(state, x0, desired, t)       # 14
         tau_leg = self._leg_commands(state, t)                     # 15
         self.iteration += 1                                        # 17
-        tau_arm = arm_pd(state, self.q_arm_des, cfg)               # RobotRunner arm PD (RR:113-117)
+        q_arm_des, qd_arm_des = self.q_arm_des, None
+        if self.arm_swing != 0.0 and self.mode == "walking":     # 변형: 팔 반대 흔들기 (Q&A 9/28, k<0 = 같은 쪽)
+            ex = np.array([np.cos(state.yaw_unwrapped), np.sin(state.yaw_unwrapped), 0.0])
+            dx = float(ex.dot(state.foot_pos_W[RIGHT] - state.foot_pos_W[LEFT]))    # 오른발이 앞 = +
+            dxd = float(ex.dot(state.foot_vel_W[RIGHT] - state.foot_vel_W[LEFT]))
+            q_arm_des = self.q_arm_des.copy()
+            qd_arm_des = np.zeros_like(q_arm_des)
+            for leg, sgn in ((RIGHT, 1.0), (LEFT, -1.0)):          # 어깨 pitch + = 팔 뒤로 (축 +y)
+                q_arm_des[leg, 0] += sgn * float(np.clip(self.arm_swing * dx, -0.6, 0.6))
+                qd_arm_des[leg, 0] = sgn * self.arm_swing * dxd
+        tau_arm = arm_pd(state, q_arm_des, cfg, qd_arm_des)       # RobotRunner arm PD (RR:113-117)
 
         if self.emulate_markers:                                   # SR:440 updateDebugVisualization (다음 틱에 반영)
             q_torso = state.torso_quat_W.copy()

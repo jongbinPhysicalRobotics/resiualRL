@@ -193,10 +193,12 @@ def standing_torque(Jv, Jw, u) -> np.ndarray:
     return tau.reshape(2, 5)
 
 
-def arm_pd(state, q_des, cfg) -> np.ndarray:
-    """ArmController.cpp:204-221: τ = kp (q_des − q) + kd (0 − q̇), kp/kd = joint_tracking.arm (100, 5)."""
+def arm_pd(state, q_des, cfg, qd_des=None) -> np.ndarray:
+    """ArmController.cpp:204-221: τ = kp (q_des − q) + kd (0 − q̇), kp/kd = joint_tracking.arm (100, 5).
+    qd_des: 변형 (팔 흔들기, Q&A 9/28) 의 목표 속도 — None 이면 0 (reference)."""
     kp = np.asarray(_cfg(cfg, "joint_tracking.arm.kp"), dtype=float)
     kd = np.asarray(_cfg(cfg, "joint_tracking.arm.kd"), dtype=float)
     q = np.asarray(state.q_arm, dtype=float).reshape(2, 4)
     qd = np.asarray(state.qd_arm, dtype=float).reshape(2, 4)
-    return kp[None] * (np.asarray(q_des, dtype=float).reshape(2, 4) - q) + kd[None] * (0.0 - qd)
+    qd_ref = 0.0 if qd_des is None else np.asarray(qd_des, dtype=float).reshape(2, 4)
+    return kp[None] * (np.asarray(q_des, dtype=float).reshape(2, 4) - q) + kd[None] * (qd_ref - qd)

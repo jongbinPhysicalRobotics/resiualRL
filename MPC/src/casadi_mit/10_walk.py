@@ -107,6 +107,8 @@ def parse_variant(s: str | None) -> dict:
             kw["foot_model"] = str(v)
         elif k == "standhold":                     # 서기 발 yaw hold (기본 1 — Q&A 9/26 Q6)
             kw["stand_yaw_hold"] = bool(int(v))
+        elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
+            kw["arm_swing"] = float(v)
         elif k == "ypath":                         # MPC 옆 위치 참조를 경로선 쪽으로 (0 ~ 1, 기본 0 — Q&A 9/27 Q2)
             kw["ypath"] = float(v)
         elif k == "ypos":                          # 착지 옆 위치 되먹임 k [-] (기본 0 — Q&A 9/27 Q2)
@@ -117,6 +119,12 @@ def parse_variant(s: str | None) -> dict:
             kw["side_swap"] = bool(int(v))
         elif k == "standbias":                     # 서기 다리 자중 보상 (기본 1 — Q&A 9/26 Q6)
             kw["stand_bias"] = bool(int(v))
+        elif k == "cop":                           # MPC CoP 앞뒤 한계 foot_half_length [m] (기본 yaml 0.065 — Q&A 9/28)
+            kw["cop_half"] = float(v)
+        elif k == "wmom":                          # MPC 걷기 입력 가중치 중 발 모멘트 6 개 (기본 yaml 1e-3 — Q&A 9/28)
+            kw["w_moment"] = float(v)
+        elif k in ("qpitch", "qyaw", "qroll"):     # MPC 걷기 상태 가중치 (기본 yaml 9000 / 500 / 50000 — Q&A 9/28)
+            kw.setdefault("q_state", {})[{"qroll": 0, "qpitch": 1, "qyaw": 2}[k]] = float(v)
         elif k == "mpcmu":                         # MPC 제약의 µ (기본 yaml 1.0). 시뮬 마찰 (mu=) 과 별개. µ_t = 0.0657·µ 도 따라감
             kw["mpc_mu"] = float(v)
         else:
@@ -389,10 +397,17 @@ def _tag(vx, vy, wz, variant):
 
 def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale, fsm_double_update, verbose,
            osqp_settings=None, fixes=(), x_dot_max=None, k_half=None, foot_model="ref", mpc_mu=None,
-           stand_yaw_hold=True, stand_bias=True, side_swap=False, raibert_gain=0.0, ypos_gain=0.0, ypath=0.0):
+           stand_yaw_hold=True, stand_bias=True, side_swap=False, raibert_gain=0.0, ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None):
     cfg = config.load()
-    if x_dot_max is not None or k_half is not None or mpc_mu is not None:
+    if (x_dot_max is not None or k_half is not None or mpc_mu is not None or cop_half is not None or w_moment is not None
+            or q_state):
         raw = cfg.to_dict()
+        if cop_half is not None:                  # MPC CoP 앞뒤 한계 (기본 yaml 0.065, 실제 선 ±0.075) — Q&A 9/28
+            raw["mpc"]["foot_half_length"] = float(cop_half)
+        if w_moment is not None:                  # 걷기 입력 가중치의 발 모멘트 (Mx, My, Mz ×2) — Q&A 9/28
+            raw["mpc"]["walking"]["input_weight_diag"][6:12] = [float(w_moment)] * 6
+        for i, w in (q_state or {}).items():      # 걷기 상태 가중치 (roll 0 / pitch 1 / yaw 2) — Q&A 9/28
+            raw["mpc"]["walking"]["state_weight_diag"][i] = float(w)
         if mpc_mu is not None:                    # MPC 마찰 제약 µ 변형 (기본 = yaml 1.0, Q&A 9/26 Q4)
             raw["mpc"]["friction_coefficient"] = float(mpc_mu)
         if x_dot_max is not None:                 # 명령 필터 전진 상한 변형 (기본 = yaml 0.7)
@@ -410,7 +425,8 @@ def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale
                         emulate_markers=markers, friction_scale=friction_scale,
                         fsm_double_update=fsm_double_update, osqp_settings=osqp_settings, verbose=verbose,
                         fixes=fixes, foot_model=foot_model, stand_yaw_hold=stand_yaw_hold, stand_bias=stand_bias,
-                        side_swap=side_swap, raibert_gain=raibert_gain, ypos_gain=ypos_gain, ypath=ypath)
+                        side_swap=side_swap, raibert_gain=raibert_gain, ypos_gain=ypos_gain, ypath=ypath,
+                        arm_swing=arm_swing)
     return cfg, model, ctl, walk_t
 
 
@@ -425,13 +441,15 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
              markers=False, stand=False, friction_scale=1.0, fsm_double_update=True, osqp_settings=None, log=False,
              variant=None, verbose=True, print_every=10.0, keep_record=False, fixes=(), x_dot_max=None, k_half=None,
              foot_model="ref", mpc_mu=None, stand_yaw_hold=True, stand_bias=True, side_swap=False, raibert_gain=0.0,
-             ypos_gain=0.0, ypath=0.0):
+             ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None):
     """walking seconds 동안 (시뮬 = settle + seconds). 반환 dict (metrics + fell 등)."""
     cfg, model, ctl, walk_t = _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale,
                                      fsm_double_update, verbose=False, osqp_settings=osqp_settings, fixes=fixes,
                                      x_dot_max=x_dot_max, k_half=k_half, foot_model=foot_model, mpc_mu=mpc_mu,
                                      stand_yaw_hold=stand_yaw_hold, stand_bias=stand_bias, side_swap=side_swap,
-                                     raibert_gain=raibert_gain, ypos_gain=ypos_gain, ypath=ypath)
+                                     raibert_gain=raibert_gain, ypos_gain=ypos_gain, ypath=ypath,
+                                     arm_swing=arm_swing, cop_half=cop_half, w_moment=w_moment,
+                                     q_state=q_state)
     m, d = model.m, model.d
     total = (0.0 if stand else walk_t) + seconds
     n = int(round(total / m.opt.timestep))
@@ -557,13 +575,14 @@ def _draw_refs(v, ctl, n_seg=16):
 
 def view(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True, profile="const", markers=False,
          stand=False, friction_scale=1.0, fsm_double_update=True, follow=True, fixes=(), x_dot_max=None,
-         foot_model="ref", raibert_gain=0.0, ypos_gain=0.0, ypath=0.0):
+         foot_model="ref", raibert_gain=0.0, ypos_gain=0.0, ypath=0.0, arm_swing=0.0):
     import threading
     import mujoco.viewer
     from viewer_hud import MitHUD
     cfg, model, ctl, walk_t = _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale,
                                      fsm_double_update, verbose=True, fixes=fixes, x_dot_max=x_dot_max,
-                                     foot_model=foot_model, raibert_gain=raibert_gain, ypos_gain=ypos_gain, ypath=ypath)
+                                     foot_model=foot_model, raibert_gain=raibert_gain, ypos_gain=ypos_gain, ypath=ypath,
+                                     arm_swing=arm_swing)
     m, d = model.m, model.d
     total = (0.0 if stand else walk_t) + seconds
     sync_every = 17
@@ -625,6 +644,7 @@ def main():
     ap.add_argument("--rai", type=float, default=0.0, help="착지점 측정 속도 되먹임 K [s] (Q&A 9/26 Q8, 기본 0 = reference)")
     ap.add_argument("--ypos", type=float, default=0.0, help="착지점 옆 위치 되먹임 k (Q&A 9/27 Q2, MATLAB 0.3·y_com)")
     ap.add_argument("--ypath", type=float, default=0.0, help="MPC 옆 위치 참조를 경로선 쪽으로 0~1 (Q&A 9/27 Q2)")
+    ap.add_argument("--armsw", type=float, default=0.0, help="팔 반대 흔들기 k [rad/m] (Q&A 9/28, 기본 0 = 고정 팔)")
     ap.add_argument("--xmax", type=float, default=None, help="명령 필터 전진 상한 [m/s] (기본 yaml 0.7)")
     a = ap.parse_args()
     import gait as _gait
@@ -633,7 +653,8 @@ def main():
         a.stand = True
     kw = dict(solver=a.solver, armature=not a.noarmature, profile=a.profile, markers=a.markers, stand=a.stand,
               friction_scale=a.mu, fsm_double_update=not a.fsm1, fixes=tuple(x for x in a.fix.split("+") if x),
-              x_dot_max=a.xmax, foot_model=a.foot, raibert_gain=a.rai, ypos_gain=a.ypos, ypath=a.ypath)
+              x_dot_max=a.xmax, foot_model=a.foot, raibert_gain=a.rai, ypos_gain=a.ypos, ypath=a.ypath,
+              arm_swing=a.armsw)
     if a.view:
         view(a.vx, a.vy, a.wz, a.seconds, **kw)
         return
