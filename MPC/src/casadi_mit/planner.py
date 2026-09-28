@@ -388,7 +388,12 @@ class SwingFootPlanner:
         yaw_trans = yaw0 + 0.5 * psi_dot * Tp
         t_rem = gait.remaining_swing_time(leg, t, clock)
         yaw_td = yaw0 + psi_dot * t_rem
-        step_W = _rz_mul(yaw_trans, v_B) * Tp
+        ky = cfg_get(self.cfg, "swing.lateral_half_stance_offset", None)   # 변형 khalfy (Q&A 9/28 Q12)
+        if ky is None:
+            step_W = _rz_mul(yaw_trans, v_B) * Tp
+        else:                                  # 옆 성분만 T_p,y = (0.5 + k_y)·T_st
+            Tp_y = max(0.0, (0.5 + float(ky)) * timing_params(self.cfg)[2])
+            step_W = _rz_mul(yaw_trans, (px * Tp, py * Tp_y, 0.0))
         center = self._stop_stance_center_world(state, x0) if stop_recenter \
             else np.asarray(x0[3:6], dtype=float).copy()
         off_B = self.nominal_offsets_B[leg]

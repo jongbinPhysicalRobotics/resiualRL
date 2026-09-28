@@ -55,7 +55,7 @@ import numpy as np
 from command import CommandFilter, UserCommand
 from contact_manager import ContactManager
 from fsm import LocomotionFSM, LocomotionState
-from gait import GaitScheduler, HorizonClock
+from gait import GaitScheduler, HorizonClock, cfg_get
 from leg_control import arm_pd, standing_torque, stance_yaw_hold_moment_z, swing_torque, walking_stance_torque
 from mit_model import LEFT, RIGHT, Rz
 from mpc import build_reference, mpc_foot_yaw
@@ -367,7 +367,9 @@ class MitController:
                         p = ref.X_ref[max(k_lo - 1, 0), 3:6]
                         psi = float(ref.psi[max(k_lo - 1, 0)])
                         off = self.planner.nominal_offsets_B[leg]
-                        step = Rz(psi + 0.5 * psi_dot * Tp) @ v_B * Tp
+                        ky = cfg_get(cfg, "swing.lateral_half_stance_offset", None)
+                        Tp_y = Tp if ky is None else max(0.0, (0.5 + float(ky)) * float(cfg.timing.stance))
+                        step = Rz(psi + 0.5 * psi_dot * Tp) @ np.array([v_B[0] * Tp, v_B[1] * Tp_y, 0.0])
                         foot = p + step + Rz(psi + psi_dot * T_sw) @ off
                         foot[2] = ref.r[0, leg, 2] + ref.X_ref[0, 5]              # 지면 높이 = 지금 목표 발 z
                         yaw2 = yaw_with_psi_offset(psi_dot, leg, swing_foot_yaw_target_world(

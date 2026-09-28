@@ -107,6 +107,8 @@ def parse_variant(s: str | None) -> dict:
             kw.setdefault("osqp_settings", {})["check_dualgap"] = int(v)
         elif k == "xmax":                          # 명령 필터 전진 상한 (reference 0.7) — 1 m/s 시험 (Q&A 9/25 Q9)
             kw["x_dot_max"] = float(v)
+        elif k == "khalfy":                        # 옆 방향 착지 미리보기 k_half 따로 (기본 = 전진과 같음 — Q&A 9/28 Q12)
+            kw["k_half_y"] = float(v)
         elif k == "khalf":                         # 착지 미리보기 k_half 를 속도와 무관하게 고정 (기본: 0.37 / 0.28 / 0.26 전환)
             kw["k_half"] = float(v)
         elif k == "foot":                          # 발 접촉 모델: ref | line (OA-MPC 선 접촉)
@@ -125,6 +127,8 @@ def parse_variant(s: str | None) -> dict:
             kw["side_swap"] = bool(int(v))
         elif k == "standbias":                     # 서기 다리 자중 보상 (기본 1 — Q&A 9/26 Q6)
             kw["stand_bias"] = bool(int(v))
+        elif k == "pmin":                          # 발 두 점 (뒤꿈치 · 앞꿈치) 각각의 최소 수직력 [N] (기본 0 — Q&A 9/28 Q12)
+            kw["point_fmin"] = float(v)
         elif k == "cop":                           # MPC CoP 앞뒤 한계 foot_half_length [m] (기본 yaml 0.065 — Q&A 9/28)
             kw["cop_half"] = float(v)
         elif k == "wmom":                          # MPC 걷기 입력 가중치 중 발 모멘트 6 개 (기본 yaml 1e-3 — Q&A 9/28)
@@ -410,15 +414,19 @@ def _tag(vx, vy, wz, variant):
 def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale, fsm_double_update, verbose,
            osqp_settings=None, fixes=(), x_dot_max=None, k_half=None, foot_model="ref", mpc_mu=None,
            stand_yaw_hold=True, stand_bias=True, side_swap=False, raibert_gain=0.0, ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None, sim_cone=None, yaw_hold=None,
-           yaw_lead=None):
+           yaw_lead=None, point_fmin=None, k_half_y=None):
     cfg = config.load()
     if (x_dot_max is not None or k_half is not None or mpc_mu is not None or cop_half is not None or w_moment is not None
-            or q_state or yaw_hold is not None or yaw_lead is not None):
+            or q_state or yaw_hold is not None or yaw_lead is not None or point_fmin is not None or k_half_y is not None):
         raw = cfg.to_dict()
         if cop_half is not None:                  # MPC CoP 앞뒤 한계 (기본 yaml 0.065, 실제 선 ±0.075) — Q&A 9/28
             raw["mpc"]["foot_half_length"] = float(cop_half)
         if w_moment is not None:                  # 걷기 입력 가중치의 발 모멘트 (Mx, My, Mz ×2) — Q&A 9/28
             raw["mpc"]["walking"]["input_weight_diag"][6:12] = [float(w_moment)] * 6
+        if k_half_y is not None:                  # 옆 방향 k_half — Q&A 9/28 Q12
+            raw["swing"]["lateral_half_stance_offset"] = float(k_half_y)
+        if point_fmin is not None:                # 발 두 점 최소 수직력 — Q&A 9/28 Q12
+            raw["mpc"]["point_force_min"] = float(point_fmin)
         if yaw_hold is not None:                  # 걷기 디딤 발 yaw hold (MPC 밖 Mz) — Q&A 9/28 Q6
             raw["swing"]["enable_stance_foot_yaw_hold"] = bool(yaw_hold)
         if yaw_lead is not None:                  # 착지 yaw 선행 배율 — Q&A 9/28 Q6
@@ -462,7 +470,7 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
              variant=None, verbose=True, print_every=10.0, keep_record=False, fixes=(), x_dot_max=None, k_half=None,
              foot_model="ref", mpc_mu=None, stand_yaw_hold=True, stand_bias=True, side_swap=False, raibert_gain=0.0,
              ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None, sim_cone=None,
-             yaw_hold=None, yaw_lead=None):
+             yaw_hold=None, yaw_lead=None, point_fmin=None, k_half_y=None):
     """walking seconds 동안 (시뮬 = settle + seconds). 반환 dict (metrics + fell 등)."""
     cfg, model, ctl, walk_t = _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale,
                                      fsm_double_update, verbose=False, osqp_settings=osqp_settings, fixes=fixes,
@@ -470,7 +478,8 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
                                      stand_yaw_hold=stand_yaw_hold, stand_bias=stand_bias, side_swap=side_swap,
                                      raibert_gain=raibert_gain, ypos_gain=ypos_gain, ypath=ypath,
                                      arm_swing=arm_swing, cop_half=cop_half, w_moment=w_moment,
-                                     q_state=q_state, sim_cone=sim_cone, yaw_hold=yaw_hold, yaw_lead=yaw_lead)
+                                     q_state=q_state, sim_cone=sim_cone, yaw_hold=yaw_hold, yaw_lead=yaw_lead,
+                                     point_fmin=point_fmin, k_half_y=k_half_y)
     m, d = model.m, model.d
     total = (0.0 if stand else walk_t) + seconds
     n = int(round(total / m.opt.timestep))

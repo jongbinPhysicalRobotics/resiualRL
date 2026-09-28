@@ -162,6 +162,12 @@ class CasadiCondensedMPC(ConvexMPC):
         if foot_model not in ("ref", "line", "mx0"):
             raise ValueError(f"foot_model must be 'ref', 'line' or 'mx0', got {foot_model!r}")
         self.foot_model = foot_model
+        # 변형 (Q&A 9/28 Q12): 발 두 점 (뒤꿈치 · 앞꿈치) 각각의 최소 수직력 [N]. 0 = 기존 (CoP 한계만).
+        # 두 점 분해 Fz_heel = (my + l_t·Fz)/(l_h + l_t), Fz_toe = (l_h·Fz − my)/(l_h + l_t) (OA-MPC) 에서
+        # CoP 두 행의 우변을 0 → −(l_h + l_t)·f_min 로. ref 발은 l_h = l_t = foot_half_length (행 8, 9), line 은 행 6, 7.
+        self.point_fmin = float(_cfg(cfg, "mpc.point_force_min", 0.0) or 0.0)
+        self._cop_rows = (6, 7) if foot_model == "line" else (8, 9)
+        self._cop_span = 2.0 * float(_cfg(cfg, "mpc.foot_half_length"))
         self._step_map = build_step_function(self.dt).map(self.N)
         self._qk_map = build_qk_function().map(self.N)
         if foot_model == "line":
@@ -242,6 +248,11 @@ class CasadiCondensedMPC(ConvexMPC):
         ub_ineq[:, 5] = np.where(stance[:, 0], -min_scale[:, 0] * self.fz_min, 0.0)
         ub_ineq[stance[:, 1], 16] = self.fz_max
         ub_ineq[:, 17] = np.where(stance[:, 1], -min_scale[:, 1] * self.fz_min, 0.0)
+        if self.point_fmin > 0.0:                                # 변형: 두 점 최소 수직력 (Q&A 9/28 Q12)
+            for side, off in ((0, 0), (1, 12)):
+                rhs = np.where(stance[:, side], -self._cop_span * min_scale[:, side] * self.point_fmin, 0.0)
+                ub_ineq[:, off + self._cop_rows[0]] = rhs
+                ub_ineq[:, off + self._cop_rows[1]] = rhs
         l = np.concatenate([np.full(N_INEQ * n, -np.inf), np.zeros(N_EQ * n)])
         u = np.concatenate([ub_ineq.reshape(-1), np.zeros(N_EQ * n)])
         sig = tuple(int(v) for v in stance.reshape(-1))
