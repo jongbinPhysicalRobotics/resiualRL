@@ -23,6 +23,9 @@ PYGLFW_LIBRARY_VARIANT=x11 .venv/bin/python MPC/src/casadi_mit/10_walk.py --view
 GAIT_ON=0 PYGLFW_LIBRARY_VARIANT=x11 .venv/bin/python MPC/src/casadi_mit/10_walk.py --view
 # 헤드리스 120 s 판정
 .venv/bin/python MPC/src/casadi_mit/10_walk.py --vx 0.6 --seconds 120
+# 변형 키를 뷰어 · 헤드리스에 바로 (11_gait_quality 와 같은 문법, 플래그보다 우선) — 9/28
+GAIT_ON=1 PYGLFW_LIBRARY_VARIANT=x11 .venv/bin/python MPC/src/casadi_mit/10_walk.py --view --wz 1.3 --rai 0.2 --ypath 0.3 \
+    --var yawlead=0,rho=1e-5
 # 입각 발 진단 (뒤꿈치 회전 · CoP 포화 · 한 점 접촉 — 9/28 Q1)
 GAIT_ON=1 .venv/bin/python MPC/src/casadi_mit/13_foot_diag.py --vx 0.65 --profile
 # 표 (세 목표)

@@ -596,14 +596,15 @@ def _draw_refs(v, ctl, n_seg=16):
 
 def view(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True, profile="const", markers=False,
          stand=False, friction_scale=1.0, fsm_double_update=True, follow=True, fixes=(), x_dot_max=None,
-         foot_model="ref", raibert_gain=0.0, ypos_gain=0.0, ypath=0.0, arm_swing=0.0):
+         foot_model="ref", raibert_gain=0.0, ypos_gain=0.0, ypath=0.0, arm_swing=0.0, **setup_kw):
+    """setup_kw: _setup 의 나머지 변형 인자 (osqp_settings, yaw_lead, cop_half … — parse_variant 결과 그대로)."""
     import threading
     import mujoco.viewer
     from viewer_hud import MitHUD
     cfg, model, ctl, walk_t = _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale,
                                      fsm_double_update, verbose=True, fixes=fixes, x_dot_max=x_dot_max,
                                      foot_model=foot_model, raibert_gain=raibert_gain, ypos_gain=ypos_gain, ypath=ypath,
-                                     arm_swing=arm_swing)
+                                     arm_swing=arm_swing, **setup_kw)
     m, d = model.m, model.d
     total = (0.0 if stand else walk_t) + seconds
     sync_every = 17
@@ -666,6 +667,7 @@ def main():
     ap.add_argument("--ypos", type=float, default=0.0, help="착지점 옆 위치 되먹임 k (Q&A 9/27 Q2, MATLAB 0.3·y_com)")
     ap.add_argument("--ypath", type=float, default=0.0, help="MPC 옆 위치 참조를 경로선 쪽으로 0~1 (Q&A 9/27 Q2)")
     ap.add_argument("--armsw", type=float, default=0.0, help="팔 반대 흔들기 k [rad/m] (Q&A 9/28, 기본 0 = 고정 팔)")
+    ap.add_argument("--var", default=None, help="11_gait_quality 와 같은 변형 키 'k=v,k=v' (위 플래그보다 우선). 예: --var yawlead=0,rho=1e-5 · --var rho=1e-5,init=warm,admm=25")
     ap.add_argument("--xmax", type=float, default=None, help="명령 필터 전진 상한 [m/s] (기본 yaml 0.7)")
     a = ap.parse_args()
     import gait as _gait
@@ -676,6 +678,8 @@ def main():
               friction_scale=a.mu, fsm_double_update=not a.fsm1, fixes=tuple(x for x in a.fix.split("+") if x),
               x_dot_max=a.xmax, foot_model=a.foot, raibert_gain=a.rai, ypos_gain=a.ypos, ypath=a.ypath,
               arm_swing=a.armsw)
+    if a.var:                                                   # 변형 키 (11_gait_quality 와 같은 문법) — 위 플래그 덮어씀
+        kw.update(parse_variant(a.var))
     if a.view:
         view(a.vx, a.vy, a.wz, a.seconds, **kw)
         return
