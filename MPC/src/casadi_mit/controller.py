@@ -171,6 +171,8 @@ class MitController:
         self.zero_motion = False                                   # _zeroMotionCommand 초기값 (MC:472)
         self.filtered = self.filter.update(raw, 0.0, self.zero_motion)   # updateFilteredUserCommand(0) (MC:448)
         self.legs = [LegRuntime() for _ in LEGS]
+        for rt_ in self.legs:                                  # 변형 swprof (Q&A 9/30 Q2): 저가속 수평 스윙 blend
+            rt_.traj.xy_profile = float(cfg_get(self.cfg, "swing.xy_profile_ramp", 0.0) or 0.0)
         for leg in LEGS:
             rt = self.legs[leg]
             rt.was_in_stance = bool(self.gait.contact(leg, t))

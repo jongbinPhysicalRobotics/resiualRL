@@ -599,6 +599,39 @@ def _blend_ddot(s: float) -> float:
     return 6.0 - 12.0 * s
 
 
+_PROFILE_CACHE = {}
+
+
+def _jerk_limited_profile(r: float):
+    """변형 swprof (Q&A 9/30 Q2): 최대 가속을 줄인 수평 스윙 blend. 가속이 0 → A (구간 r) → A 유지 → −A (가운데 2r 동안 선형 전환)
+    → −A 유지 → 0 (끝 r). 시작 · 끝의 속도 · 가속 0, b(1) = 1 이 되게 A 를 수치로 맞춘다. r → 0 이면 뱅뱅 (최대 가속 4),
+    cubic smoothstep 은 6. 반환: (s 격자, b, b', b'') 표."""
+    key = round(float(r), 4)
+    if key in _PROFILE_CACHE:
+        return _PROFILE_CACHE[key]
+    n = 2001
+    s = np.linspace(0.0, 1.0, n)
+    a = np.empty(n)
+    for i, x in enumerate(s):
+        if x < r:
+            a[i] = x / r
+        elif x < 0.5 - r:
+            a[i] = 1.0
+        elif x < 0.5 + r:
+            a[i] = 1.0 - (x - (0.5 - r)) / r
+        elif x < 1.0 - r:
+            a[i] = -1.0
+        else:
+            a[i] = -1.0 + (x - (1.0 - r)) / r
+    ds = s[1] - s[0]
+    v = np.concatenate(([0.0], np.cumsum(0.5 * (a[1:] + a[:-1]) * ds)))
+    b = np.concatenate(([0.0], np.cumsum(0.5 * (v[1:] + v[:-1]) * ds)))
+    A = 1.0 / b[-1]
+    out = (s, b * A, v * A, a * A)
+    _PROFILE_CACHE[key] = out
+    return out
+
+
 class SwingFootTrajectory:
     """cubic smoothstep (Bézier 아님). XY 는 전체 swing 에 한 번, Z 는 pInit.z→pFinal.z+h→pFinal.z 두 반쪽.
 
@@ -616,6 +649,7 @@ class SwingFootTrajectory:
         self.T = 0.0
         self.remaining = 0.0
         self.active = False
+        self.xy_profile = 0.0                      # 변형 swprof: 0 = cubic smoothstep (reference), r > 0 = 저가속 blend
 
     def reset(self, p_init, p_final, height: float, T: float) -> None:
         """ref: :6-21."""
@@ -677,7 +711,11 @@ class SwingFootTrajectory:
         s = min(max(self.phase(), 0.0), 1.0)
         ds = (1.0 / self.T) if self.T > 0.0 else 0.0
         d2s = 0.0
-        b, bd, bdd = _blend(s), _blend_dot(s), _blend_ddot(s)
+        if self.xy_profile > 0.0:                  # 변형 swprof (Q&A 9/30 Q2): 최대 가속 낮은 수평 blend
+            sg, B, Bd, Bdd = _jerk_limited_profile(self.xy_profile)
+            b, bd, bdd = float(np.interp(s, sg, B)), float(np.interp(s, sg, Bd)), float(np.interp(s, sg, Bdd))
+        else:
+            b, bd, bdd = _blend(s), _blend_dot(s), _blend_ddot(s)
         pi0, pi1, pi2 = float(self.p_init[0]), float(self.p_init[1]), float(self.p_init[2])
         pf0, pf1, pf2 = float(self.p_final[0]), float(self.p_final[1]), float(self.p_final[2])
         d0, d1 = pf0 - pi0, pf1 - pi1
