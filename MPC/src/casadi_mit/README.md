@@ -58,7 +58,10 @@ GAIT_ON=1 .venv/bin/python MPC/src/casadi_mit/13_foot_diag.py --vx 0.65 --profil
 — 옆 0.3 · 회전 1.3 (선행 0/0.5/1) · 1.5 · 걸으며 돌기 0.3~0.6+0.5 · 0.3+1.0 · 전진 0.65~0.7 모두 120 s 완주 (고정 50 회 — 잔차 학습 쪽 후보).
 ⚠ 0.75 이상은 `xmax=1.0` 을 줘야 한다 (yaml x_dot_max 0.7 로 잘림 — Q&A 9/29 Q9).
 
-**후보 A6 (9/29 Q9, 최고 성능)**: `--var profile=ramp,fix=yawref,ypath=0.3,rho=1e-5,init=warm,khalf=0.37,yawtraj=1.0,yawff=2,psioff=0,rai=0.2,vdir=0.7,xmax=1.0,hor=0.44,fref=1e-3,armsw=0.3,yawlead=0.5`
+**후보 A7 (9/29 Q10, 고정 25 회 · 10 ms — 잔차 학습 쪽)**: `--var profile=ramp,fix=yawref,ypath=0.3,init=warm,khalf=0.37,yawtraj=1.0,yawff=2,psioff=0,rai=0.2,vdir=0.7,admm=25,nbs=5,rho=5e-5,hor=0.44,fref=1e-3,armsw=0.3,xmax=1.0,yawlead=0.5`
+— A6 와 같은 14 개 목표 전부 120 s 완주 (전진 0.8 실측 0.73, 걸으며 돌기 0.7+0.5). `nbs` = 몇 틱마다 MPC 를 푸나 (기본 7), `tors` = 비틀림 계수.
+
+**후보 A6 (9/29 Q9, 수렴 OSQP)**: `--var profile=ramp,fix=yawref,ypath=0.3,rho=1e-5,init=warm,khalf=0.37,yawtraj=1.0,yawff=2,psioff=0,rai=0.2,vdir=0.7,xmax=1.0,hor=0.44,fref=1e-3,armsw=0.3,yawlead=0.5`
 (수렴 OSQP) — 위 목표 전부 + 걸으며 돌기 0.65 · 0.7+0.5 + 전진 0.75 · 0.8 (실측 0.74) 120 s 완주. 한계: 0.85, 0.6+0.75, 0.5+1.0. 렌더 확인 전.
 9/29 변형 키: `psioff` (앞장서는 발 벌림 배율), `vdir` (착지 방향만 걸러진 실측 쪽으로), `vmeas`, `rais`/`raisx` (한 주기 평균 Raibert), `raiy`, `cent`, `raii`, `srbm`, `walkbias`, `wbcom`, `swh`, `tdz`, `fref`, `tswing`, `tcycle`, `hor`, `kdz` — 결과는 Q&A 9/29.
 

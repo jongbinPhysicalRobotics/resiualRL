@@ -123,7 +123,7 @@ def parse_variant(s: str | None) -> dict:
             kw["stand_yaw_hold"] = bool(int(v))
         elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
             kw["arm_swing"] = float(v)
-        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
+        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
             path = {"tdz": "swing.touchdown_z", "fref": "mpc.force_ref_weight", "tswing": "timing.swing",
                     "tcycle": "timing.cycle", "hor": "timing.horizon", "kdz": "swing.kd_zeta",
                     "raii": "swing.raibert_int_gain", "psioff": "swing.psi_offset_scale",
@@ -131,7 +131,8 @@ def parse_variant(s: str | None) -> dict:
                     "srbm": "mpc.srb_mass_scale", "walkbias": "swing.walk_stance_bias", "vmeas": "swing.step_vmeas_blend",
                     "vdir": "swing.step_vdir_blend",
                     "rais": "swing.raibert_stride_gain_y", "raisx": "swing.raibert_stride_gain_x",
-                    "wbcom": "mpc.whole_body_com", "swh": "swing.height"}[k]
+                    "wbcom": "mpc.whole_body_com", "swh": "swing.height",
+                    "tors": "mpc.torsional_friction_scale", "nbs": "mpc.iterations_between_solve"}[k]
             kw.setdefault("raw_over", {})[path] = float(v)
         elif k == "xpath":                         # MPC 앞뒤 위치 참조를 경로선 쪽으로 (뒤처진 만큼 × a, ±5 cm, 기본 0 — Q&A 9/29 Q4)
             kw["xpath"] = float(v)
