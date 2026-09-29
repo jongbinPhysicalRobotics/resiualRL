@@ -54,6 +54,11 @@ GAIT_ON=1 .venv/bin/python MPC/src/casadi_mit/13_foot_diag.py --vx 0.65 --profil
 
 스윙 발 yaw (9/29 Q3): `yawtraj=1.0,yawff=2` 를 두 후보에 더하면 회전 선행 무관 · 걸으며 돌기 0.3+0.5 까지 완주. `yawkp`, `yawkd` 도 변형 키.
 
+**후보 A4 (9/29 Q8, 최신)**: `--var profile=ramp,fix=yawref,ypath=0.3,rho=1e-5,init=warm,admm=50,khalf=0.37,yawtraj=1.0,yawff=2,psioff=0,rai=0.2,vdir=0.7,yawlead=0.5`
+— 옆 0.3 · 회전 1.3 (선행 0/0.5/1) · 1.5 · 걸으며 돌기 0.3~0.6+0.5 · 0.3+1.0 · 전진 0.65~0.75 모두 120 s 완주 (실측 천장 0.65).
+`admm=50` 을 빼면 (수렴 OSQP) 전진 추종이 더 낫다 (0.75 → 실측 0.68). 한계: 0.65+0.5 · 0.6+0.75 (과속 전도).
+9/29 변형 키: `psioff` (앞장서는 발 벌림 배율), `vdir` (착지 방향만 걸러진 실측 쪽으로), `vmeas`, `rais`/`raisx` (한 주기 평균 Raibert), `raiy`, `cent`, `raii`, `srbm`, `walkbias`, `tdz`, `fref`, `tswing`, `tcycle`, `hor`, `kdz` — 결과는 Q&A 9/29.
+
 ## 알려진 문제 (이어받은 것)
 
 속도 벽 0.6 m/s (9/25 Q10·9/26 Q1 — k_half 고정으로도 벽 유지). 9/28 Q1: slide+rai+ypath 로 0.65 까지 완주, 0.675 에서 발 pitch
