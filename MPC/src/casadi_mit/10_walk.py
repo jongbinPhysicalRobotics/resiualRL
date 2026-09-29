@@ -123,6 +123,11 @@ def parse_variant(s: str | None) -> dict:
             kw["stand_yaw_hold"] = bool(int(v))
         elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
             kw["arm_swing"] = float(v)
+        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii"):   # 설정 덮어쓰기 (Q&A 9/29 Q5)
+            path = {"tdz": "swing.touchdown_z", "fref": "mpc.force_ref_weight", "tswing": "timing.swing",
+                    "tcycle": "timing.cycle", "hor": "timing.horizon", "kdz": "swing.kd_zeta",
+                    "raii": "swing.raibert_int_gain"}[k]
+            kw.setdefault("raw_over", {})[path] = float(v)
         elif k == "xpath":                         # MPC 앞뒤 위치 참조를 경로선 쪽으로 (뒤처진 만큼 × a, ±5 cm, 기본 0 — Q&A 9/29 Q4)
             kw["xpath"] = float(v)
         elif k == "ypath":                         # MPC 옆 위치 참조를 경로선 쪽으로 (0 ~ 1, 기본 0 — Q&A 9/27 Q2)
@@ -147,6 +152,8 @@ def parse_variant(s: str | None) -> dict:
             kw["sim_cone"] = str(v)
         elif k == "yawhold":                       # 걷기 디딤 발 yaw hold (MPC 밖 Mz, 기본 yaml 1) — Q&A 9/28 Q6
             kw["yaw_hold"] = bool(int(v))
+            if int(v) == 2:                        # 2 = 두 점 접촉일 때만 (Q&A 9/29 Q5)
+                kw.setdefault("swing_over", {})["stance_yaw_hold_mode"] = 2
         elif k == "yawlead":                       # 착지 yaw 선행 배율 swing_foot_yaw_lead_scale (기본 1.0) — Q&A 9/28 Q6
             kw["yaw_lead"] = float(v)
         elif k == "mpcmu":                         # MPC 제약의 µ (기본 yaml 1.0). 시뮬 마찰 (mu=) 과 별개. µ_t = 0.0657·µ 도 따라감
@@ -422,15 +429,22 @@ def _tag(vx, vy, wz, variant):
 def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale, fsm_double_update, verbose,
            osqp_settings=None, fixes=(), x_dot_max=None, k_half=None, foot_model="ref", mpc_mu=None,
            stand_yaw_hold=True, stand_bias=True, side_swap=False, raibert_gain=0.0, ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None, sim_cone=None, yaw_hold=None,
-           yaw_lead=None, point_fmin=None, k_half_y=None, swing_over=None, xpath=0.0):
+           yaw_lead=None, point_fmin=None, k_half_y=None, swing_over=None, xpath=0.0, raw_over=None):
     cfg = config.load()
     if (x_dot_max is not None or k_half is not None or mpc_mu is not None or cop_half is not None or w_moment is not None
-            or q_state or yaw_hold is not None or yaw_lead is not None or point_fmin is not None or k_half_y is not None or swing_over):
+            or q_state or yaw_hold is not None or yaw_lead is not None or point_fmin is not None or k_half_y is not None or swing_over or raw_over):
         raw = cfg.to_dict()
         if cop_half is not None:                  # MPC CoP 앞뒤 한계 (기본 yaml 0.065, 실제 선 ±0.075) — Q&A 9/28
             raw["mpc"]["foot_half_length"] = float(cop_half)
         if w_moment is not None:                  # 걷기 입력 가중치의 발 모멘트 (Mx, My, Mz ×2) — Q&A 9/28
             raw["mpc"]["walking"]["input_weight_diag"][6:12] = [float(w_moment)] * 6
+        for path_, v_ in (raw_over or {}).items():  # 일반 설정 덮어쓰기 (tdz · fref · tswing · tcycle · hor · kdz) — Q&A 9/29 Q5
+            sec, key = path_.split(".")
+            raw[sec][key] = v_
+        if raw_over and ("timing.swing" in raw_over or "timing.cycle" in raw_over):   # 입각 = 주기 − 스윙
+            raw["timing"]["stance"] = float(raw["timing"]["cycle"]) - float(raw["timing"]["swing"])
+        if raw_over and "timing.horizon" in raw_over:   # 스텝 간격 20 ms 유지
+            raw["timing"]["horizon_steps"] = int(round(float(raw["timing"]["horizon"]) / 0.02))
         for k_, v_ in (swing_over or {}).items():  # 스윙 설정 덮어쓰기 (yawtraj · yawkp · yawkd) — Q&A 9/29 Q1
             raw["swing"][k_] = v_
         if k_half_y is not None:                  # 옆 방향 k_half — Q&A 9/28 Q12
@@ -480,7 +494,8 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
              variant=None, verbose=True, print_every=10.0, keep_record=False, fixes=(), x_dot_max=None, k_half=None,
              foot_model="ref", mpc_mu=None, stand_yaw_hold=True, stand_bias=True, side_swap=False, raibert_gain=0.0,
              ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None, sim_cone=None,
-             yaw_hold=None, yaw_lead=None, point_fmin=None, k_half_y=None, swing_over=None, xpath=0.0):
+             yaw_hold=None, yaw_lead=None, point_fmin=None, k_half_y=None, swing_over=None, xpath=0.0,
+             raw_over=None):
     """walking seconds 동안 (시뮬 = settle + seconds). 반환 dict (metrics + fell 등)."""
     cfg, model, ctl, walk_t = _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale,
                                      fsm_double_update, verbose=False, osqp_settings=osqp_settings, fixes=fixes,
@@ -490,7 +505,7 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
                                      arm_swing=arm_swing, cop_half=cop_half, w_moment=w_moment,
                                      q_state=q_state, sim_cone=sim_cone, yaw_hold=yaw_hold, yaw_lead=yaw_lead,
                                      point_fmin=point_fmin, k_half_y=k_half_y, swing_over=swing_over,
-                                     xpath=xpath)
+                                     xpath=xpath, raw_over=raw_over)
     m, d = model.m, model.d
     total = (0.0 if stand else walk_t) + seconds
     n = int(round(total / m.opt.timestep))

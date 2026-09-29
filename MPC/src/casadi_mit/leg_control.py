@@ -85,7 +85,9 @@ def walking_stance_torque(dyn, state, leg: int, u0, alpha: float, touchdown_yaw:
     else:
         F = -alpha * u0[3:6]
         M = -alpha * u0[9:12]
-    if bool(_cfg(cfg, "swing.enable_stance_foot_yaw_hold", False)) and alpha > 0.0:
+    two_pt_only = int(_cfg(cfg, "swing.stance_yaw_hold_mode", 1) or 1) == 2      # 변형 yawhold=2 (Q&A 9/29 Q5)
+    two_pt = int(np.asarray(getattr(state, "foot_contact_count", np.full(2, 2)))[leg]) >= 2
+    if bool(_cfg(cfg, "swing.enable_stance_foot_yaw_hold", False)) and alpha > 0.0 and (two_pt or not two_pt_only):
         M = M.copy()
         M[2] += alpha * stance_yaw_hold_moment_z(state, leg, dyn, touchdown_yaw, cfg)
     return stance_torque(dyn, F, M)
@@ -175,6 +177,10 @@ def swing_torque(dyn, state, leg: int, p_des, v_des, a_des, touchdown_yaw: float
     Jv = np.asarray(dyn.Jv, dtype=float)
     kp = swing_kp(dyn, cfg)
     kd = np.diag(np.asarray(_cfg(cfg, "swing.kd_diag"), dtype=float))
+    zeta = _cfg(cfg, "swing.kd_zeta", None)                   # 변형 kdz (Q&A 9/29 Q5): K_d = 2ζ·diag(Λ)·ω_n
+    if zeta:
+        wn = np.asarray(_cfg(cfg, "swing.natural_frequency"), dtype=float)
+        kd = np.diag(2.0 * float(zeta) * np.diag(apparent_inertia(Jv, dyn.M)) * wn)
     p = np.asarray(state.foot_pos_W[leg], dtype=float)
     v = np.asarray(state.foot_vel_W[leg], dtype=float)
     f_fb = kp @ (np.asarray(p_des, dtype=float) - p) + kd @ (np.asarray(v_des, dtype=float) - v)

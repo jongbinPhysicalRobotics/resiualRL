@@ -26,7 +26,7 @@ import os
 
 # 걷기 스케줄 켜기/끄기 (Q&A 9/24 Q8 의 G1 관례): 1 = 걷기, 0 = 제자리 서기 (FSM standing).
 # 환경변수 GAIT_ON 이 파일 값보다 우선. 10_walk.py 가 읽어서 stand 모드로 돌린다.
-GAIT_ON = 1
+GAIT_ON = 0
 if "GAIT_ON" in os.environ:
     GAIT_ON = int(os.environ["GAIT_ON"])
 from dataclasses import dataclass, field

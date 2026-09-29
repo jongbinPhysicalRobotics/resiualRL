@@ -70,7 +70,7 @@ class LegRuntime:
 
 
 def _rpy_to_quat(r, p, y) -> np.ndarray:
-    """ref: My_Controller.cpp:77-84 (q_yaw * q_pitch * q_roll), wxyz."""
+    "roll pitch yaw to quaternion (x, y, z, w)"
     cr, sr = math.cos(r / 2), math.sin(r / 2)
     cp, sp = math.cos(p / 2), math.sin(p / 2)
     cy, sy = math.cos(y / 2), math.sin(y / 2)
@@ -96,7 +96,7 @@ class MitController:
         self.fixes = set(fixes or ())
         self.foot_model = str(foot_model)
         self.raibert_gain = float(raibert_gain)
-        self.ypos_gain = float(ypos_gain)            # 착지 옆 위치 되먹임 (Q&A 9/27 Q2)
+        self.ypos_gain = float(ypos_gain)            # 착지 옆 위치 되먹임 (9/27 Q2)
         self.ypath = float(ypath)                    # MPC 참조 옆 위치를 경로선 쪽으로 (0 = reference 재고정, 1 = 경로선) (Q&A 9/27 Q2)
         self.arm_swing = float(arm_swing)            # 팔 반대 흔들기 k [rad/m] (0 = reference 고정 팔) (Q&A 9/28):
                                                      # 어깨 pitch = ±k·(x_R − x_L) — 스윙 다리의 수직축 각운동량을 팔이 상쇄
@@ -107,7 +107,7 @@ class MitController:
         self.side_swap = bool(side_swap)             # 걸음 위상 좌우 맞바꿈 (Q&A 9/26 Q7: 하중 쏠림은 위상 0 다리를 따라간다)
         self.stand_bias = bool(stand_bias)           # 서기에서 다리 자중 (qfrc_bias) 보상 — Q&A 9/26 Q6:
                                                      # 순수 Jᵀ wrench 는 다리 자중을 안 보상해 발이 평행하게 안으로 크리프 (60 s 에 65 mm)
-        self.stand_yaw_hold = bool(stand_yaw_hold)   # 서기에서도 발 yaw hold (reference C++ 엔 없음 — Q&A 9/26 Q6:
+        self.stand_yaw_hold = bool(stand_yaw_hold)   # 서기에서도 발 yaw holdQ&A 9/26 Q6:
                                                      # 서기는 관절 PD 가 없어 hip yaw 가 자유 내부 자유도 → 60 s 에 발 뒤꿈치가 140 mm 모임)
         unknown = self.fixes - {"slide", "yawref", "yawanchor", "foot2"}
         if unknown:
@@ -144,9 +144,7 @@ class MitController:
         self.solve_log = []          # MPC 틱마다 dict
         self.tick_info = {}
 
-    # ------------------------------------------------------------------------------------------------------------
-    # 초기화 (MC:400-474)
-    # ------------------------------------------------------------------------------------------------------------
+    #초기화
     def _initialize(self, state, raw: UserCommand):
         cfg = self.cfg
         t = state.t
@@ -185,9 +183,7 @@ class MitController:
         self.walk_start_time = None if self.mode == "standing" else t
         self.transitions = [(t, out.state.value)]
 
-    # ------------------------------------------------------------------------------------------------------------
-    # FSM (MC:534-604)
-    # ------------------------------------------------------------------------------------------------------------
+    #FSM
     def _reset_swing_state(self, state, t):
         """ref: MC:534-553."""
         for leg in LEGS:
@@ -243,9 +239,8 @@ class MitController:
         f = self.filtered
         return swing_foot_yaw_target_world(state.yaw_unwrapped, f.psi_dot, planar_speed(f.x_dot, f.y_dot), self.cfg)
 
-    # ------------------------------------------------------------------------------------------------------------
-    # swing trajectories (MC:792-868, spec 05 §7)
-    # ------------------------------------------------------------------------------------------------------------
+
+    #swing trajectory
     def _update_swing_trajectories(self, state, desired, t):
         dt = max(0.0, t - self.last_control_time)
         psi_dot = self.filtered.psi_dot
@@ -285,9 +280,8 @@ class MitController:
             rt.was_in_stance = False
         self.last_control_time = t
 
-    # ------------------------------------------------------------------------------------------------------------
-    # MPC (MC:911-1055)
-    # ------------------------------------------------------------------------------------------------------------
+
+    # MPC
     def _maybe_update_mpc(self, state, x0, desired, t):
         if not (self.iteration == 0 or (self.iteration - self.last_mpc_iteration) >= self.n_between):
             return None

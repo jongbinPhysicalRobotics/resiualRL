@@ -266,6 +266,9 @@ class SwingFootPlanner:
         self.lat_err = 0.0                           # 컨트롤러가 매 틱 넣어 줌: CoM 의 경로선 기준 옆 이탈 [m] (+ = 왼쪽)
         self.raibert_gain = float(raibert_gain)      # 측정 속도 되먹임 Δp = K(v_meas − v_cmd) (Q&A 9/26 Q8, 기본 0 = reference)
         self.raibert_max = float(raibert_max)
+        self.raibert_int_gain = float(cfg_get(cfg, "swing.raibert_int_gain", 0.0) or 0.0)   # 변형 raii (Q&A 9/29 Q5)
+        self.v_int = np.zeros(2)                     # ∫(v_meas − v_cmd) dt (월드 xy)
+        self.v_int_t = None
         self.cycle, self.swing_time, self.stance_time, _, _, _ = timing_params(cfg)
         offs = cfg_get(cfg, "swing.nominal_foot_offsets_B", None)
         if offs is not None and len(offs) > 0:
@@ -289,6 +292,8 @@ class SwingFootPlanner:
     def reset(self) -> None:
         """ref: SwingFootPlanner.cpp:29-44 (+ ensureSwingTouchdownCache :88-107 가 다시 채우는 값)."""
         self.touchdown_targets = np.zeros((2, 3))
+        self.v_int = np.zeros(2)                     # 변형 raii 적분 초기화
+        self.v_int_t = None
         self.touchdown_valid = [False, False]
         self.nominal_offsets_B = np.zeros((2, 3))
         self.nominal_offset_valid = [False, False]
@@ -409,6 +414,9 @@ class SwingFootPlanner:
                 corr = corr * (self.raibert_max / n_c)
             corr_B = _rzT_mul(yaw0, np.array([corr[0], corr[1], 0.0]))
             planned_B = planned_B + corr_B
+        if self.raibert_int_gain > 0.0:           # 변형 raii (Q&A 9/29 Q5): Δp += K_i ∫(v_meas − v_cmd) dt
+            ci = self.raibert_int_gain * self.v_int
+            planned_B = planned_B + _rzT_mul(yaw0, np.array([ci[0], ci[1], 0.0]))
         if self.ypos_gain > 0.0:                  # 옆 위치 되먹임 (Q&A 9/27 Q2): 밀린 쪽으로 더 내딛기 (+부호)
             planned_B[1] += min(max(self.ypos_gain * self.lat_err, -self.ypos_max), self.ypos_max)
         # 좌우 교차 방지 (lateral crossing guard)
@@ -418,7 +426,7 @@ class SwingFootPlanner:
         elif lat < 0.0:
             planned_B[1] = min(planned_B[1], 0.0)
         target = center + _rz_mul(yaw0, planned_B)
-        target[2] = SWING_FOOT_TARGET_Z
+        target[2] = float(cfg_get(self.cfg, "swing.touchdown_z", SWING_FOOT_TARGET_Z))   # 변형 tdz (Q&A 9/29 Q5)
         return target
 
     # --- 매 tick -------------------------------------------------------------
@@ -430,6 +438,16 @@ class SwingFootPlanner:
         """
         t = float(t)
         clock.sync(t)                                    # syncHorizonClock (:283)
+        if self.raibert_int_gain > 0.0:                  # 변형 raii: 속도 오차 적분 (클램프 → K_i·∫ ≤ 5 cm)
+            if self.v_int_t is not None:
+                yaw_c = self.body_yaw_target_world(state)
+                vc = _rz_mul(yaw_c, (_cmd(filtered_cmd, "x_dot"), _cmd(filtered_cmd, "y_dot"), 0.0))
+                self.v_int += (np.asarray(x0[9:11], dtype=float) - vc[:2]) * max(0.0, t - self.v_int_t)
+                lim = 0.05 / self.raibert_int_gain
+                nrm = float(np.hypot(*self.v_int))
+                if nrm > lim:
+                    self.v_int *= lim / nrm
+            self.v_int_t = t
         self._ensure_nominal_offsets(state)
         x0 = np.asarray(x0, dtype=float)
         px, py = _cmd(filtered_cmd, "x_dot"), _cmd(filtered_cmd, "y_dot")

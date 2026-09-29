@@ -403,6 +403,7 @@ class ConvexMPC:
         self.use_shifted_warm_start = bool(_cfg(cfg, "mpc.use_shifted_warm_start", True))
         self.fz_max = float(_cfg(cfg, "mpc.normal_force_max"))
         self.fz_min = float(_cfg(cfg, "mpc.normal_force_min"))
+        self.force_ref_w = float(_cfg(cfg, "mpc.force_ref_weight", 0.0) or 0.0)   # 변형 fref (기본 0)
         for m in ("walking", "standing"):
             if str(_cfg(cfg, f"mpc.{m}.contact_wrench_model", "full_wrench")) != "full_wrench":
                 # no_roll_moment 는 D 행 6/9 에 발 x축이 들어간다 (ConvexMPC.cpp:554-568) — MIT 는 full_wrench.
@@ -536,6 +537,17 @@ class ConvexMPC:
             H, q = self.build_cost(A_qp, B_qp, x0, X_ref_flat, mode)
             blk, l, u, sig, stance = self.build_constraints(steps, foot_yaw)
             stance0 = stance[0]
+            if self.force_ref_w > 0.0:                    # 변형 fref (Q&A 9/29 Q5): w·(Fz − m|g|/n)² — Residual MPC 논문식 힘 참조
+                st = np.asarray(stance, dtype=bool).reshape(self.N, 2)
+                n_st = np.maximum(st.sum(1), 1)
+                fz_ref = float(reduced.mass) * abs(self.gravity) / n_st
+                H = H.copy(); q = q.copy()
+                for k in range(self.N):
+                    for leg, iz in ((0, 2), (1, 5)):
+                        if st[k, leg]:
+                            i = k * NU + iz
+                            H[i, i] += 2.0 * self.force_ref_w
+                            q[i] -= 2.0 * self.force_ref_w * fz_ref[k]
             info["build_ms"] = (time.perf_counter() - t_start) * 1e3
             t_solve = time.perf_counter()
             if self.solver_name == "osqp":
