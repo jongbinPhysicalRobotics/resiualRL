@@ -90,7 +90,10 @@ def walking_stance_torque(dyn, state, leg: int, u0, alpha: float, touchdown_yaw:
     if bool(_cfg(cfg, "swing.enable_stance_foot_yaw_hold", False)) and alpha > 0.0 and (two_pt or not two_pt_only):
         M = M.copy()
         M[2] += alpha * stance_yaw_hold_moment_z(state, leg, dyn, touchdown_yaw, cfg)
-    return stance_torque(dyn, F, M)
+    tau = stance_torque(dyn, F, M)
+    if bool(_cfg(cfg, "swing.walk_stance_bias", False)):   # 변형 walkbias (Q&A 9/29 Q7): 입각 다리 자중 · 코리올리 보상
+        tau = tau + np.asarray(dyn.bias, dtype=float)
+    return tau
 
 
 # ---------------------------------------------------------------------------

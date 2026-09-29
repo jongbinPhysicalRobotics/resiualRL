@@ -272,6 +272,8 @@ class SwingFootPlanner:
         self.raibert_int_gain = float(cfg_get(cfg, "swing.raibert_int_gain", 0.0) or 0.0)   # 변형 raii (Q&A 9/29 Q5)
         self.v_int = np.zeros(2)                     # ∫(v_meas − v_cmd) dt (월드 xy)
         self.v_int_t = None
+        self.v_filt = None                           # 변형 vdir (Q&A 9/29 Q7): 실측 속도 1 차 저역통과 (τ 0.25 s)
+        self.v_filt_t = None
         self.cycle, self.swing_time, self.stance_time, _, _, _ = timing_params(cfg)
         offs = cfg_get(cfg, "swing.nominal_foot_offsets_B", None)
         if offs is not None and len(offs) > 0:
@@ -297,6 +299,8 @@ class SwingFootPlanner:
         self.touchdown_targets = np.zeros((2, 3))
         self.v_int = np.zeros(2)                     # 변형 raii 적분 초기화
         self.v_int_t = None
+        self.v_filt = None
+        self.v_filt_t = None
         self.touchdown_valid = [False, False]
         self.nominal_offsets_B = np.zeros((2, 3))
         self.nominal_offset_valid = [False, False]
@@ -392,6 +396,20 @@ class SwingFootPlanner:
         """
         v_B = (px, py, 0.0)
         Tp = half_stance_preview_time(_norm2(px, py), self.cfg)
+        am = float(cfg_get(self.cfg, "swing.step_vmeas_blend", 0.0) or 0.0)   # 변형 vmeas (Q&A 9/29 Q7): 주항 속도에 실측 섞기
+        if am > 0.0:                               # (MIT Cheetah: 실측 속도 × T_p 가 주항). 몸 기준 = 목표 yaw 기준
+            y0_ = self.turn_stop_yaw_W if self.turn_stop_frame_valid else self.body_yaw_target_world(state)
+            vm = _rzT_mul(y0_, np.array([x0[9], x0[10], 0.0]))
+            v_B = ((1 - am) * px + am * vm[0], (1 - am) * py + am * vm[1], 0.0)
+        ad = float(cfg_get(self.cfg, "swing.step_vdir_blend", 0.0) or 0.0)   # 변형 vdir (Q&A 9/29 Q7)
+        if ad > 0.0 and self.v_filt is not None and _norm2(px, py) > 0.1 and float(np.hypot(*self.v_filt)) > 0.1:
+            y0_ = self.turn_stop_yaw_W if self.turn_stop_frame_valid else self.body_yaw_target_world(state)
+            vf_B = _rzT_mul(y0_, np.array([self.v_filt[0], self.v_filt[1], 0.0]))
+            a_cmd = math.atan2(py, px)
+            d_ang = (math.atan2(vf_B[1], vf_B[0]) - a_cmd + math.pi) % (2 * math.pi) - math.pi
+            ang = a_cmd + ad * d_ang                  # 방향만 실측 진행 방향 쪽으로, 크기는 명령
+            spd = _norm2(px, py)
+            v_B = (spd * math.cos(ang), spd * math.sin(ang), 0.0)
         yaw0 = self.turn_stop_yaw_W if self.turn_stop_frame_valid else self.body_yaw_target_world(state)
         yaw_trans = yaw0 + 0.5 * psi_dot * Tp
         t_rem = gait.remaining_swing_time(leg, t, clock)
@@ -409,7 +427,7 @@ class SwingFootPlanner:
         if stop_recenter:
             planned_B = _rz_mul(yaw_td - yaw0, off_B)
         if self.raibert_gain > 0.0:                # 측정 속도 되먹임 (Q&A 9/26 Q8): reference 는 명령 속도만 써서
-            v_cmd_W = _rz_mul(yaw_trans, v_B)      # 옆 드리프트·과속을 발걸음이 못 잡는다 → Δp = K(v_meas − v_cmd), 클램프
+            v_cmd_W = _rz_mul(yaw_trans, (px, py, 0.0))   # 명령 속도 (vmeas 섞기와 무관). Δp = K(v_meas − v_cmd), 클램프
             verr = np.asarray(x0[9:12], dtype=float) - v_cmd_W
             ky = cfg_get(self.cfg, "swing.raibert_gain_y", None)       # 변형 raiy (Q&A 9/29 Q6): 옆 (진행 기준) 이득 따로
             if ky is None:
@@ -451,6 +469,14 @@ class SwingFootPlanner:
         """
         t = float(t)
         clock.sync(t)                                    # syncHorizonClock (:283)
+        if cfg_get(self.cfg, "swing.step_vdir_blend", None):   # 변형 vdir: 실측 속도 저역통과
+            vm = np.asarray(x0[9:11], dtype=float)
+            if self.v_filt is None:
+                self.v_filt = vm.copy()
+            else:
+                a_ = min(1.0, max(0.0, t - self.v_filt_t) / 0.25)
+                self.v_filt = self.v_filt + a_ * (vm - self.v_filt)
+            self.v_filt_t = t
         if self.raibert_int_gain > 0.0:                  # 변형 raii: 속도 오차 적분 (클램프 → K_i·∫ ≤ 5 cm)
             if self.v_int_t is not None:
                 yaw_c = self.body_yaw_target_world(state)

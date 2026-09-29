@@ -318,7 +318,12 @@ class MitController:
             if "foot2" in self.fixes and self.mode == "walking":      # 변형: 지평 안 두 번째 착지 (Q&A 9/28 Q10)
                 foot_yaw = self._second_footholds(ref, steps, foot_yaw)
             self.last_ref = ref                                # 뷰어 오버레이용 (10_walk._draw_refs)
-            u0, info = self.mpc.solve(x0, ref, steps, foot_yaw, state.reduced, self.mode, active=active)
+            red = state.reduced
+            ms = float(cfg_get(self.cfg, "mpc.srb_mass_scale", 1.0) or 1.0)   # 변형 srbm (Q&A 9/29 Q7): MPC 질량만 배율
+            if ms != 1.0:
+                import dataclasses as _dc
+                red = _dc.replace(red, mass=float(red.mass) * ms)
+            u0, info = self.mpc.solve(x0, ref, steps, foot_yaw, red, self.mode, active=active)
             info["x_ref0"] = ref.X_ref[0].copy()
             info["stance0"] = np.asarray(steps[0].stance, dtype=bool).copy()
             info["stance_tab"] = np.array([s.stance for s in steps], dtype=bool)
