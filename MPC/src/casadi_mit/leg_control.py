@@ -193,6 +193,45 @@ def swing_torque(dyn, state, leg: int, p_des, v_des, a_des, touchdown_yaw: float
     return tau + swing_attitude_torque(state, leg, dyn, touchdown_yaw, cfg, yaw_des, yaw_rate_des, torso_wz)
 
 
+def limit_swing_torque(tau_des, dyn, lo, hi, mode: int, w_att: float = 0.01, eps: float = 1e-4) -> np.ndarray:
+    """변형 swlim (Q&A 9/30 Q4): 스윙 토크가 관절 한계를 넘을 때 관절별로 따로 자르지 않고 발 가속 방향을 지킨다.
+
+    mode 1 (scale): τ = h + s·(τ_des − h), s = 모든 관절이 [lo, hi] 안에 드는 가장 큰 값 (0..1). h = 중력·코리올리.
+    mode 2 (qp)   : x = Δq̈ 를 변수로  min ‖J_v x‖² + w_att‖J_ω x‖² + eps‖x‖²  s.t.  lo ≤ τ_des + M x ≤ hi,  τ = τ_des + M x
+                    (다리만의 동역학 τ = M q̈ + h 에서 발 위치 가속 오차를 가장 작게, 발 자세는 작은 가중치).
+    한계 안이면 두 방법 모두 τ_des 그대로 (s = 1, x = 0)."""
+    tau_des = np.asarray(tau_des, dtype=float)
+    lo = np.asarray(lo, dtype=float)
+    hi = np.asarray(hi, dtype=float)
+    if np.all(tau_des <= hi) and np.all(tau_des >= lo):
+        return tau_des
+    if int(mode) == 1:
+        h = np.asarray(dyn.bias, dtype=float)
+        d = tau_des - h
+        s = 1.0
+        for j in range(tau_des.size):
+            if tau_des[j] > hi[j] and d[j] > 1e-12:
+                s = min(s, (hi[j] - h[j]) / d[j])
+            elif tau_des[j] < lo[j] and d[j] < -1e-12:
+                s = min(s, (lo[j] - h[j]) / d[j])
+        s = min(max(s, 0.0), 1.0)
+        return h + s * d
+    import quadprog
+    Jv = np.asarray(dyn.Jv, dtype=float)
+    Jw = np.asarray(dyn.Jw, dtype=float)
+    M = np.asarray(dyn.M, dtype=float)
+    n = tau_des.size
+    G = Jv.T @ Jv + w_att * (Jw.T @ Jw) + eps * np.eye(n)
+    # quadprog: min ½xᵀGx − aᵀx  s.t. Cᵀx ≥ b.   M x ≤ hi − τ_des  →  −M x ≥ τ_des − hi ;  M x ≥ lo − τ_des
+    C = np.hstack([-M.T, M.T])
+    b = np.concatenate([tau_des - hi, lo - tau_des])
+    try:
+        x = quadprog.solve_qp(G, np.zeros(n), C, b, 0)[0]
+    except ValueError:                           # 풀 수 없으면 (중력만으로도 한계 밖 등) 관절별 자르기로
+        return np.clip(tau_des, lo, hi)
+    return tau_des + M @ x
+
+
 # ---------------------------------------------------------------------------
 # Standing / arms
 # ---------------------------------------------------------------------------

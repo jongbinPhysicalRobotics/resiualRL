@@ -47,7 +47,8 @@ from command import CommandFilter, UserCommand
 from contact_manager import ContactManager
 from fsm import LocomotionFSM, LocomotionState
 from gait import GaitScheduler, HorizonClock, cfg_get
-from leg_control import arm_pd, standing_torque, stance_yaw_hold_moment_z, swing_torque, walking_stance_torque
+from leg_control import (arm_pd, limit_swing_torque, standing_torque, stance_yaw_hold_moment_z, swing_torque,
+                         walking_stance_torque)
 from mit_model import LEFT, RIGHT, Rz
 from mpc import build_reference, mpc_foot_yaw
 from mpc_casadi import CasadiCondensedMPC
@@ -455,6 +456,10 @@ class MitController:
                                         rt.traj.acceleration(), rt.touchdown_yaw, cfg,
                                         yaw_des=yaw_des, yaw_rate_des=yaw_rate_des,
                                         torso_wz=torso_ref)   # yawff=2: 몸통 회전은 명령 ψ̇ 로 (Q&A 9/29 Q1)
+                lim_mode = int(cfg_get(cfg, "swing.torque_limit_mode", 0) or 0)   # 변형 swlim (Q&A 9/30 Q4)
+                if lim_mode:
+                    ids = self.model.leg_act[leg]
+                    tau[leg] = limit_swing_torque(tau[leg], dyn, self.model.ctrl_lo[ids], self.model.ctrl_hi[ids], lim_mode)
         return tau
 
     # ------------------------------------------------------------------------------------------------------------

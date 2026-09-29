@@ -124,7 +124,7 @@ def parse_variant(s: str | None) -> dict:
             kw["stand_yaw_hold"] = bool(int(v))
         elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
             kw["arm_swing"] = float(v)
-        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
+        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
             path = {"tdz": "swing.touchdown_z", "fref": "mpc.force_ref_weight", "tswing": "timing.swing",
                     "tcycle": "timing.cycle", "hor": "timing.horizon", "kdz": "swing.kd_zeta",
                     "raii": "swing.raibert_int_gain", "psioff": "swing.psi_offset_scale",
@@ -135,7 +135,7 @@ def parse_variant(s: str | None) -> dict:
                     "wbcom": "mpc.whole_body_com", "swh": "swing.height",
                     "tors": "mpc.torsional_friction_scale", "nbs": "mpc.iterations_between_solve",
                     "minw": "swing.min_step_width", "replan": "swing.replan",
-                    "rvwb": "swing.raibert_vel_wholebody", "rpfz": "swing.replan_freeze", "swprof": "swing.xy_profile_ramp"}[k]
+                    "rvwb": "swing.raibert_vel_wholebody", "rpfz": "swing.replan_freeze", "swprof": "swing.xy_profile_ramp", "swlim": "swing.torque_limit_mode"}[k]
             kw.setdefault("raw_over", {})[path] = float(v)
         elif k == "push":                          # 외란 (Q&A 9/29 Q11, 교수님 지시): Fx:Fy:t0:dur — 진행 방향 기준 [N],
             f_ = [float(x) for x in str(v).split(":")]   # t0 = 측정 창 시작 (걷기 시작 / 서기면 0) 뒤 [s], dur [s]. 몸통 CoM 에 가함
