@@ -104,6 +104,7 @@ class MitController:
         self.lon_err = 0.0
         self.lat_err = 0.0
         self.path_W = None                           # 명령 경로선 (걷기 시작 CoM 에서 명령 속도·목표 yaw 로 적분)
+        self.wb_dz = None                            # 변형 wbcom (Q&A 9/29 Q9): 몸통 CoM − 전신 CoM 높이 (첫 틱)
         self.side_swap = bool(side_swap)             # 걸음 위상 좌우 맞바꿈 (Q&A 9/26 Q7: 하중 쏠림은 위상 0 다리를 따라간다)
         self.stand_bias = bool(stand_bias)           # 서기에서 다리 자중 (qfrc_bias) 보상 — Q&A 9/26 Q6:
                                                      # 순수 Jᵀ wrench 는 다리 자중을 안 보상해 발이 평행하게 안으로 크리프 (60 s 에 65 mm)
@@ -295,14 +296,15 @@ class MitController:
             override = self.cm.build_horizon_override() if self.mode == "walking" else None
             steps = self.gait.horizon_steps(self.clock, override, t_now=t if "slide" in self.fixes else None)
             seed = x0.copy()
+            dz = self.wb_dz or 0.0                                 # 변형 wbcom: 전신 CoM 은 몸통 CoM 보다 dz 낮다
             if self.mode == "standing":
                 seed[0:3] = self.body.euler_W
                 seed[3:6] = self.body.nominal_position_W
-                seed[5] = self.body.nominal_height_W
+                seed[5] = self.body.nominal_height_W - dz
             else:
                 seed[0] = self.body.euler_W[0]
                 seed[1] = self.body.euler_W[1]
-                seed[5] = self.body.nominal_height_W
+                seed[5] = self.body.nominal_height_W - dz
                 if "yawref" in self.fixes:                         # 변형: 방향 유지 (reference 는 x0 yaw)
                     seed[2] = self.body.euler_W[2]
                 if self.xpath > 0.0:                               # 변형: 앞뒤 위치 참조를 경로선 쪽으로 (Q&A 9/29 Q4)
@@ -323,6 +325,9 @@ class MitController:
             if ms != 1.0:
                 import dataclasses as _dc
                 red = _dc.replace(red, mass=float(red.mass) * ms)
+            if cfg_get(self.cfg, "mpc.whole_body_com", 0.0):      # 변형 wbcom: 질량 = 전체 질량
+                import dataclasses as _dc
+                red = _dc.replace(red, mass=float(self.model.total_mass()))
             u0, info = self.mpc.solve(x0, ref, steps, foot_yaw, red, self.mode, active=active)
             info["x_ref0"] = ref.X_ref[0].copy()
             info["stance0"] = np.asarray(steps[0].stance, dtype=bool).copy()
@@ -461,6 +466,14 @@ class MitController:
         self._sync_fsm(state, raw)                                 # 1
         self.clock.sync(t)                                         # 2
         x0 = state.x0(self.g)                                      # 3
+        if cfg_get(cfg, "mpc.whole_body_com", 0.0):               # 변형 wbcom (Q&A 9/29 Q9): 병진 상태 = 전신 CoM (다리 43 % 포함)
+            import mujoco as _mj                                   # — m·a = ΣF + mg 가 정확. 자세 · 각속도 · 관성은 몸통 그대로 (근사)
+            _mj.mj_subtreeVel(model.m, model.d)
+            if self.wb_dz is None:                                 # 높이 참조 (몸통 CoM 기준) 를 옮길 상수: 첫 틱의 높이 차
+                self.wb_dz = float(x0[5] - model.d.subtree_com[0][2])
+            x0 = x0.copy()
+            x0[3:6] = model.d.subtree_com[0]
+            x0[9:12] = model.d.subtree_linvel[0]
         dt = max(0.0, t - self.last_control_time)                  # 4
         self.filtered = self.filter.update(raw, dt, self.zero_motion)   # 5
         self.body.update(x0, dt, self.mode, state.foot_pos_W, self.filtered, cfg,       # 6
