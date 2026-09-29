@@ -152,6 +152,8 @@ class MitController:
         self.gait = GaitScheduler(cfg, self.clock, side_swap=self.side_swap)
         self.cm = ContactManager(cfg)
         self.planner = SwingFootPlanner(cfg, raibert_gain=self.raibert_gain, ypos_gain=self.ypos_gain)
+        import planner as _planner_mod                             # 변형 psioff (Q&A 9/29 Q6)
+        _planner_mod.PSI_OFFSET_SCALE = float(cfg_get(cfg, "swing.psi_offset_scale", 1.0))
         self.mpc = CasadiCondensedMPC(cfg, solver=self.solver_name, osqp_settings=self.osqp_settings or None,
                                       verbose_errors=self.verbose, foot_model=self.foot_model)
         tr = cfg.locomotion_transition

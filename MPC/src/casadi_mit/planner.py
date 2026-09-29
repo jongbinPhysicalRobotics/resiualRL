@@ -117,13 +117,16 @@ def swing_foot_yaw_target_world(yaw_unwrapped: float, psi_dot: float, speed: flo
     return float(yaw_unwrapped) + _yaw_lead_scale(cfg) * float(psi_dot) * preview
 
 
+PSI_OFFSET_SCALE = 1.0      # 변형 psioff (Q&A 9/29 Q6): 앞장서는 발 벌림 배율 (1 = reference, 0 = 끔). 컨트롤러가 cfg 로 설정
+
+
 def swing_foot_yaw_psi_offset(leg: int, psi_dot: float) -> float:
     """clamp(100 deg/(rad/s)·|psi_dot|, 0, 20 deg) [rad]; +Left (psi_dot>0), −Right (psi_dot<0), else 0.
 
     ref: SwingYawTarget.h:11-27.
     """
     psi_dot = float(psi_dot)
-    mag_deg = min(max(100.0 * abs(psi_dot), 0.0), 20.0)
+    mag_deg = PSI_OFFSET_SCALE * min(max(100.0 * abs(psi_dot), 0.0), 20.0)
     if psi_dot > 0.0 and leg == LEFT:
         return mag_deg * _DEG_TO_RAD
     if psi_dot < 0.0 and leg == RIGHT:
@@ -408,12 +411,22 @@ class SwingFootPlanner:
         if self.raibert_gain > 0.0:                # 측정 속도 되먹임 (Q&A 9/26 Q8): reference 는 명령 속도만 써서
             v_cmd_W = _rz_mul(yaw_trans, v_B)      # 옆 드리프트·과속을 발걸음이 못 잡는다 → Δp = K(v_meas − v_cmd), 클램프
             verr = np.asarray(x0[9:12], dtype=float) - v_cmd_W
-            corr = self.raibert_gain * verr
+            ky = cfg_get(self.cfg, "swing.raibert_gain_y", None)       # 변형 raiy (Q&A 9/29 Q6): 옆 (진행 기준) 이득 따로
+            if ky is None:
+                corr = self.raibert_gain * verr
+            else:
+                vb = _rzT_mul(yaw0, np.array([verr[0], verr[1], 0.0]))
+                corr = _rz_mul(yaw0, np.array([self.raibert_gain * vb[0], float(ky) * vb[1], 0.0]))
             n_c = _norm2(corr[0], corr[1])
             if n_c > self.raibert_max:
                 corr = corr * (self.raibert_max / n_c)
             corr_B = _rzT_mul(yaw0, np.array([corr[0], corr[1], 0.0]))
             planned_B = planned_B + corr_B
+        kc = float(cfg_get(self.cfg, "swing.centrifugal_gain", 0.0) or 0.0)   # 변형 cent (Q&A 9/29 Q6)
+        if kc != 0.0:                              # MIT Cheetah 착지 원심 항 (음수 = 반대 부호 시험): Δp = k·½√(h/g)·[v_y ψ̇, −v_x ψ̇] (몸 기준 실측 v, 명령 ψ̇)
+            vbm = _rzT_mul(yaw0, np.array([x0[9], x0[10], 0.0]))
+            s_h = 0.5 * math.sqrt(max(float(x0[5]), 0.1) / 9.81)
+            planned_B = planned_B + kc * s_h * float(psi_dot) * np.array([vbm[1], -vbm[0], 0.0])
         if self.raibert_int_gain > 0.0:           # 변형 raii (Q&A 9/29 Q5): Δp += K_i ∫(v_meas − v_cmd) dt
             ci = self.raibert_int_gain * self.v_int
             planned_B = planned_B + _rzT_mul(yaw0, np.array([ci[0], ci[1], 0.0]))
