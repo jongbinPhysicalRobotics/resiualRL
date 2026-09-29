@@ -1,15 +1,5 @@
-"""MitController — reference MyController::runController 한 틱 (spec 05 §2) 을 그대로 조립한다.
 
-ref: My_Controller/src/My_Controller.cpp
-    initializeRuntimeObjects  :400-474     prepareController        :476-486 (FSM update #1)
-    resetSwingState           :534-553     applyLocomotionOutput    :555-577
-    syncLocomotionFSM         :579-604     updateFilteredUserCommand:610-654
-    updateBodyTarget          :677-736     activeContactForSide     :738-753
-    updateSwingTrajectories   :792-868     swingFootYawTargetWorld  :891-909
-    maybeUpdateMpc            :911-1055    writeStandingLegCommands :1254-1295
-    writeLegCommands          :1297-1372   runController            :1374-1429
-    RobotRunner::run (arm PD every tick, RR:113-117)
-
+"""""
 틱 순서 (spec 05 §2; 07 §2 루프: tick() 은 mj_step 이 남긴 d 를 mj_forward 없이 읽는다):
     state = read_state()                         (SR:409-412: 축소 몸체 + cheater state + yaw unwrap)
     raw   = schedule(t)                          (SR:413-415)
@@ -43,7 +33,7 @@ ref: My_Controller/src/My_Controller.cpp
         "slide"      지평 접촉표를 cycle 원점이 아니라 지금부터 (tk = t + k·dt) — O1
         "yawref"     walking 에서 MPC yaw 참조를 측정 yaw 가 아니라 body target yaw (명령 적분) 로 — 방향 유지 (O4)
         "yawanchor"  swing planner 의 몸 yaw 를 명령 적분 대신 측정 yaw 로 — 흘러간 방향을 따라감 (O4 의 반대 선택)
-"""
+"""""
 from __future__ import annotations
 
 import copy
@@ -101,7 +91,8 @@ class MitController:
                  emulate_markers: bool = False, fsm_double_update: bool = True, friction_scale: float = 1.0,
                  osqp_settings: dict | None = None, verbose: bool = False, fixes=(), foot_model: str = "ref",
                  stand_yaw_hold: bool = True, stand_bias: bool = True, side_swap: bool = False,
-                 raibert_gain: float = 0.0, ypos_gain: float = 0.0, ypath: float = 0.0, arm_swing: float = 0.0):
+                 raibert_gain: float = 0.0, ypos_gain: float = 0.0, ypath: float = 0.0, arm_swing: float = 0.0,
+                 xpath: float = 0.0):
         self.fixes = set(fixes or ())
         self.foot_model = str(foot_model)
         self.raibert_gain = float(raibert_gain)
@@ -109,6 +100,8 @@ class MitController:
         self.ypath = float(ypath)                    # MPC 참조 옆 위치를 경로선 쪽으로 (0 = reference 재고정, 1 = 경로선) (Q&A 9/27 Q2)
         self.arm_swing = float(arm_swing)            # 팔 반대 흔들기 k [rad/m] (0 = reference 고정 팔) (Q&A 9/28):
                                                      # 어깨 pitch = ±k·(x_R − x_L) — 스윙 다리의 수직축 각운동량을 팔이 상쇄
+        self.xpath = float(xpath)                    # 변형 (Q&A 9/29 Q4): MPC 참조 앞뒤 위치를 경로선 쪽으로 (뒤처진 만큼, ±5 cm)
+        self.lon_err = 0.0
         self.lat_err = 0.0
         self.path_W = None                           # 명령 경로선 (걷기 시작 CoM 에서 명령 속도·목표 yaw 로 적분)
         self.side_swap = bool(side_swap)             # 걸음 위상 좌우 맞바꿈 (Q&A 9/26 Q7: 하중 쏠림은 위상 0 다리를 따라간다)
@@ -316,6 +309,11 @@ class MitController:
                 seed[5] = self.body.nominal_height_W
                 if "yawref" in self.fixes:                         # 변형: 방향 유지 (reference 는 x0 yaw)
                     seed[2] = self.body.euler_W[2]
+                if self.xpath > 0.0:                               # 변형: 앞뒤 위치 참조를 경로선 쪽으로 (Q&A 9/29 Q4)
+                    psi_t = float(self.body.euler_W[2])
+                    pull = min(max(-self.xpath * self.lon_err, -0.05), 0.05)   # 뒤처지면 (+) 앞으로, 최대 5 cm
+                    seed[3] += pull * np.cos(psi_t)
+                    seed[4] += pull * np.sin(psi_t)
                 if self.ypath > 0.0:                               # 변형: 옆 위치 참조를 경로선 쪽으로 (Q&A 9/27 Q2)
                     psi_t = float(self.body.euler_W[2])
                     seed[3] -= self.ypath * self.lat_err * (-np.sin(psi_t))
@@ -482,6 +480,7 @@ class MitController:
                 self.path_W = self.path_W + dt * np.array([c_ * vx_ - s_ * vy_, s_ * vx_ + c_ * vy_])
             dxy = x0[3:5] - self.path_W
             self.lat_err = float(-s_ * dxy[0] + c_ * dxy[1])      # heading 왼쪽 성분 (+ = 경로선 왼쪽)
+            self.lon_err = float(c_ * dxy[0] + s_ * dxy[1])       # heading 앞 성분 (+ = 경로선보다 앞)
             self.planner.lat_err = self.lat_err
             nominal = self.planner.desired_foot_positions(state, x0, self.clock, self.gait, self.filtered, t)
         self.cm.update(state, self.gait, self.mode, nominal, t)   # 9
