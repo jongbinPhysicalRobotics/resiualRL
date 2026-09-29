@@ -142,6 +142,8 @@ def parse_variant(s: str | None) -> dict:
             kw["push"] = tuple(f_ + [10.0, 0.2][len(f_) - 2:]) if len(f_) < 4 else tuple(f_)
         elif k == "swwn":                          # 스윙 고유진동수 배율 (기본 1 = [151, 151, 110] rad/s) — Q&A 9/30 Q5
             kw.setdefault("swing_over", {})["natural_frequency"] = [151.0 * float(v), 151.0 * float(v), 110.0 * float(v)]
+        elif k == "symcom":                        # 진단 전용 (Q&A 9/30 Q7): 몸통 무게중심 y 를 0 으로 (모델 좌우 대칭화)
+            kw["sym_com"] = bool(int(v))
         elif k == "wf":                            # 걷기 입력 가중치의 수평력 (Fx, Fy ×2, 기본 0.001) — 두 발 내력 억제 (Q&A 9/29 Q12)
             kw["w_force_xy"] = float(v)
         elif k == "pushrep":                       # 외란 반복 주기 [s] (0 = 한 번) — push 와 함께
@@ -449,7 +451,8 @@ def _tag(vx, vy, wz, variant):
 def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale, fsm_double_update, verbose,
            osqp_settings=None, fixes=(), x_dot_max=None, k_half=None, foot_model="ref", mpc_mu=None,
            stand_yaw_hold=True, stand_bias=True, side_swap=False, raibert_gain=0.0, ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None, sim_cone=None, yaw_hold=None,
-           yaw_lead=None, point_fmin=None, k_half_y=None, swing_over=None, xpath=0.0, raw_over=None, w_force_xy=None):
+           yaw_lead=None, point_fmin=None, k_half_y=None, swing_over=None, xpath=0.0, raw_over=None, w_force_xy=None,
+           sym_com=False):
     cfg = config.load()
     if (x_dot_max is not None or k_half is not None or mpc_mu is not None or cop_half is not None or w_moment is not None
             or q_state or yaw_hold is not None or yaw_lead is not None or point_fmin is not None or k_half_y is not None or swing_over or raw_over
@@ -491,6 +494,8 @@ def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale
                 raw["swing"][key] = float(k_half)
         cfg = config.MitConfig(raw)
     model = MitModel(armature=armature, emulate_debug_markers=markers)
+    if sym_com:                                   # 진단 전용: base 몸체 무게중심 y (+4.8 mm) 를 0 으로
+        model.m.body_ipos[model.base_body, 1] = 0.0
     if sim_cone is not None:                      # 시뮬 마찰 원뿔 (MuJoCo 기본 pyramidal) — Q&A 9/28 Q6
         model.m.opt.cone = {"pyramidal": mujoco.mjtCone.mjCONE_PYRAMIDAL,
                             "elliptic": mujoco.mjtCone.mjCONE_ELLIPTIC}[sim_cone]
@@ -534,7 +539,7 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
              foot_model="ref", mpc_mu=None, stand_yaw_hold=True, stand_bias=True, side_swap=False, raibert_gain=0.0,
              ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None, sim_cone=None,
              yaw_hold=None, yaw_lead=None, point_fmin=None, k_half_y=None, swing_over=None, xpath=0.0,
-             raw_over=None, push=None, push_repeat=0.0, w_force_xy=None):
+             raw_over=None, push=None, push_repeat=0.0, w_force_xy=None, sym_com=False):
     """walking seconds 동안 (시뮬 = settle + seconds). 반환 dict (metrics + fell 등).
 
     push = (Fx, Fy, t0, dur): 진행 방향 (몸통 yaw) 기준 수평력 [N] 을 측정 창 시작 + t0 부터 dur 동안 몸통 CoM 에 가한다."""
@@ -546,7 +551,7 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
                                      arm_swing=arm_swing, cop_half=cop_half, w_moment=w_moment,
                                      q_state=q_state, sim_cone=sim_cone, yaw_hold=yaw_hold, yaw_lead=yaw_lead,
                                      point_fmin=point_fmin, k_half_y=k_half_y, swing_over=swing_over,
-                                     xpath=xpath, raw_over=raw_over, w_force_xy=w_force_xy)
+                                     xpath=xpath, raw_over=raw_over, w_force_xy=w_force_xy, sym_com=sym_com)
     m, d = model.m, model.d
     total = (0.0 if stand else walk_t) + seconds
     n = int(round(total / m.opt.timestep))
