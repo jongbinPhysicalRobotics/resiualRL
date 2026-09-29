@@ -57,10 +57,11 @@ def make_schedule(profile: str, vx: float, vy: float, wz: float, walk_t: float) 
         return CommandSchedule.constant(vx, vy, wz)
     if profile == "step":
         return CommandSchedule.step_at(walk_t, vx, vy, wz)
-    if profile == "ramp":
+    if profile.startswith("ramp"):                  # ramp = 2 s 에 목표 도달, rampT = T 초 (Q&A 9/30 Q3)
+        t_ramp = float(profile[4:]) if len(profile) > 4 else 2.0
         prof = {}
         for k, v in (("x_dot", vx), ("y_dot", vy), ("psi_dot", wz)):
-            prof[k] = {"final": v, "rate": abs(v) / 2.0 if v != 0 else 0.0, "start": walk_t}
+            prof[k] = {"final": v, "rate": abs(v) / t_ramp if v != 0 else 0.0, "start": walk_t}
         return CommandSchedule(prof)
     raise ValueError(f"unknown profile {profile!r}")
 
