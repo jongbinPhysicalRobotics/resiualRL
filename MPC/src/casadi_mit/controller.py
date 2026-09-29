@@ -501,6 +501,10 @@ class MitController:
             self.lat_err = float(-s_ * dxy[0] + c_ * dxy[1])      # heading 왼쪽 성분 (+ = 경로선 왼쪽)
             self.lon_err = float(c_ * dxy[0] + s_ * dxy[1])       # heading 앞 성분 (+ = 경로선보다 앞)
             self.planner.lat_err = self.lat_err
+            if cfg_get(cfg, "swing.raibert_vel_wholebody", 0.0):  # 변형 rvwb (Q&A 9/29 Q12): 전신 CoM 속도
+                import mujoco as _mj
+                _mj.mj_subtreeVel(model.m, model.d)
+                self.planner.v_wb = np.array(model.d.subtree_linvel[0], dtype=float, copy=True)
             nominal = self.planner.desired_foot_positions(state, x0, self.clock, self.gait, self.filtered, t)
         self.cm.update(state, self.gait, self.mode, nominal, t)   # 9
         desired = self.cm.managed_foot_positions(nominal)          # 10

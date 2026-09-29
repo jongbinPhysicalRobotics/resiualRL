@@ -274,6 +274,7 @@ class SwingFootPlanner:
         self.v_int_t = None
         self.v_filt = None                           # 변형 vdir (Q&A 9/29 Q7): 실측 속도 1 차 저역통과 (τ 0.25 s)
         self.v_filt_t = None
+        self.v_wb = None                             # 변형 rvwb: 컨트롤러가 매 틱 넣는 전신 CoM 속도 (월드)
         self.stride_gain = (float(cfg_get(cfg, "swing.raibert_stride_gain_x", 0.0) or 0.0),   # 변형 raisx · rais (Q&A 9/29 Q8)
                             float(cfg_get(cfg, "swing.raibert_stride_gain_y", 0.0) or 0.0))
         self.cycle, self.swing_time, self.stance_time, _, _, _ = timing_params(cfg)
@@ -400,6 +401,10 @@ class SwingFootPlanner:
         """
         v_B = (px, py, 0.0)
         Tp = half_stance_preview_time(_norm2(px, py), self.cfg)
+        elapsed = 0.0                                  # 변형 replan (Q&A 9/29 Q12): 스윙 중 재계획이면 지난 스윙 시간만큼
+        if cfg_get(self.cfg, "swing.replan", 0.0):     # 미리보기를 줄인다 (중심 = 지금 CoM 이라 이륙 때 계획과 같은 기하)
+            elapsed = max(0.0, self.swing_time - gait.remaining_swing_time(leg, t, clock))
+            Tp = max(0.0, Tp - elapsed)
         am = float(cfg_get(self.cfg, "swing.step_vmeas_blend", 0.0) or 0.0)   # 변형 vmeas (Q&A 9/29 Q7): 주항 속도에 실측 섞기
         if am > 0.0:                               # (MIT Cheetah: 실측 속도 × T_p 가 주항). 몸 기준 = 목표 yaw 기준
             y0_ = self.turn_stop_yaw_W if self.turn_stop_frame_valid else self.body_yaw_target_world(state)
@@ -422,7 +427,7 @@ class SwingFootPlanner:
         if ky is None:
             step_W = _rz_mul(yaw_trans, v_B) * Tp
         else:                                  # 옆 성분만 T_p,y = (0.5 + k_y)·T_st
-            Tp_y = max(0.0, (0.5 + float(ky)) * timing_params(self.cfg)[2])
+            Tp_y = max(0.0, (0.5 + float(ky)) * timing_params(self.cfg)[2] - elapsed)
             step_W = _rz_mul(yaw_trans, (px * Tp, py * Tp_y, 0.0))
         center = self._stop_stance_center_world(state, x0) if stop_recenter \
             else np.asarray(x0[3:6], dtype=float).copy()
@@ -464,6 +469,14 @@ class SwingFootPlanner:
             planned_B[1] = max(planned_B[1], 0.0)
         elif lat < 0.0:
             planned_B[1] = min(planned_B[1], 0.0)
+        w_min = float(cfg_get(self.cfg, "swing.min_step_width", 0.0) or 0.0)   # 변형 minw (Q&A 9/29 Q12): 딛고 있는 발에서
+        if w_min > 0.0 and lat != 0.0 and not stop_recenter:                   # 옆으로 최소 w_min (몸 중심 기준 교차 방지만으론
+            other = 1 - leg                                                     # 밀린 뒤 두 발이 겹쳤다 — 발 꼬임)
+            o_B = _rzT_mul(yaw0, np.asarray(state.foot_pos_W[other], dtype=float) - center)
+            if lat > 0.0:
+                planned_B[1] = max(planned_B[1], float(o_B[1]) + w_min)
+            else:
+                planned_B[1] = min(planned_B[1], float(o_B[1]) - w_min)
         target = center + _rz_mul(yaw0, planned_B)
         target[2] = float(cfg_get(self.cfg, "swing.touchdown_z", SWING_FOOT_TARGET_Z))   # 변형 tdz (Q&A 9/29 Q5)
         return target
@@ -477,6 +490,9 @@ class SwingFootPlanner:
         """
         t = float(t)
         clock.sync(t)                                    # syncHorizonClock (:283)
+        if cfg_get(self.cfg, "swing.raibert_vel_wholebody", 0.0) and self.v_wb is not None:
+            x0 = np.array(x0, dtype=float, copy=True)    # 변형 rvwb (Q&A 9/29 Q12): 착지점 되먹임 속도 = 전신 CoM 속도
+            x0[9:12] = self.v_wb                         # (몸통 속도엔 스윙 다리 반동이 섞인다). 착지 기준점 (CoM 위치) 은 그대로
         if cfg_get(self.cfg, "swing.step_vdir_blend", None):   # 변형 vdir: 실측 속도 저역통과
             vm = np.asarray(x0[9:11], dtype=float)
             if self.v_filt is None:
@@ -543,7 +559,9 @@ class SwingFootPlanner:
                 continue
             was = self.was_in_stance[leg]
             self.was_in_stance[leg] = False
-            if was or not self.touchdown_valid[leg] or just or self.turn_stop_frame_valid:
+            rp = float(cfg_get(self.cfg, "swing.replan", 0.0) or 0.0)            # 변형 replan: 스윙 중 매 틱 재계산 (끝 50 ms 고정)
+            late = gait.remaining_swing_time(leg, t, clock) <= float(cfg_get(self.cfg, "swing.replan_freeze", 0.05))
+            if was or not self.touchdown_valid[leg] or just or self.turn_stop_frame_valid or (rp > 0.0 and not late):
                 self.touchdown_targets[leg] = self.touchdown_target(
                     leg, px, py, psi_cmd, stop, state, x0, gait, clock, t)
                 self.touchdown_valid[leg] = True
