@@ -52,6 +52,8 @@ GAIT_ON=1 .venv/bin/python MPC/src/casadi_mit/13_foot_diag.py --vx 0.65 --profil
 
 후보 B2 (9/28 Q12, 걸음 품질): `--fix slide+yawref --foot line --rai 0.2 --ypath 0.3 --var rho=1e-5,init=warm,admm=25,khalf=0.2,khalfy=0.37,yawhold=0,cop=0.05,yawlead=0` — 한 점 접촉 11 %, slip 2 mm, 걸으며 돌기 0.3+0.5 완주. 새 변형: `pmin=f` (두 점 최소 수직력), `khalfy=k` (옆 방향 k_half).
 
+스윙 발 yaw (9/29 Q3): `yawtraj=1.0,yawff=2` 를 두 후보에 더하면 회전 선행 무관 · 걸으며 돌기 0.3+0.5 까지 완주. `yawkp`, `yawkd` 도 변형 키.
+
 ## 알려진 문제 (이어받은 것)
 
 속도 벽 0.6 m/s (9/25 Q10·9/26 Q1 — k_half 고정으로도 벽 유지). 9/28 Q1: slide+rai+ypath 로 0.65 까지 완주, 0.675 에서 발 pitch

@@ -110,7 +110,8 @@ def swing_kp(dyn, cfg) -> np.ndarray:
     return np.diag(wn * wn * np.diag(lam))
 
 
-def swing_attitude_torque(state, leg: int, dyn, touchdown_yaw: float, cfg) -> np.ndarray:
+def swing_attitude_torque(state, leg: int, dyn, touchdown_yaw: float, cfg, yaw_des=None, yaw_rate_des: float = 0.0,
+                          torso_wz: float = 0.0) -> np.ndarray:
     """computeSwingAttitudeLevelTorque (SwingAttitudeControl.h:9-84).
 
     x̂,ŷ,ẑ = 정규화한 발 SITE 축 (R_WF 열), ω = Jw q̇_leg (torso 제외), up = e_z
@@ -155,13 +156,17 @@ def swing_attitude_torque(state, leg: int, dyn, touchdown_yaw: float, cfg) -> np
         if nrm <= 1e-9:
             raise RuntimeError("Swing attitude control received degenerate yaw axis")
         proj = proj / nrm
-        d = np.array([np.cos(touchdown_yaw), np.sin(touchdown_yaw), 0.0])
+        target = touchdown_yaw if yaw_des is None else float(yaw_des)   # 변형 yawtraj: 보간 목표 (Q&A 9/29 Q1)
+        d = np.array([np.cos(target), np.sin(target), 0.0])
         e = np.arctan2(_EZ.dot(np.cross(proj, d)), proj.dot(d))
-        moment += (ykp * e - ykd * _EZ.dot(omega)) * _EZ
+        # ω 는 다리 관절에 의한 (몸통 기준) 회전 → 목표 월드 yaw 속도에서 몸통 yaw 속도를 뺀 값과 비교
+        rate_ref = 0.0 if (yaw_des is None or yaw_rate_des is None) else float(yaw_rate_des) - float(torso_wz)
+        moment += (ykp * e - ykd * (_EZ.dot(omega) - rate_ref)) * _EZ
     return Jw.T @ moment
 
 
-def swing_torque(dyn, state, leg: int, p_des, v_des, a_des, touchdown_yaw: float, cfg) -> np.ndarray:
+def swing_torque(dyn, state, leg: int, p_des, v_des, a_des, touchdown_yaw: float, cfg,
+                 yaw_des=None, yaw_rate_des: float = 0.0, torso_wz: float = 0.0) -> np.ndarray:
     """SwingFoot 모드 (LegController.cpp:262-291 → OperationalSpaceDynamics.cpp:61-84) + 자세 토크 (MC:1361).
 
     F_fb = 0 (forceFeedForward) + Kp (p_des − p) + Kd (v_des − v)     p, v = 발 SITE 위치/속도 (state, world)
@@ -176,7 +181,7 @@ def swing_torque(dyn, state, leg: int, p_des, v_des, a_des, touchdown_yaw: float
     a_res = np.asarray(a_des, dtype=float) - np.asarray(dyn.JvDot_qd, dtype=float)
     lam = apparent_inertia(Jv, dyn.M)
     tau = Jv.T @ f_fb + Jv.T @ (lam @ a_res) + np.asarray(dyn.bias, dtype=float)
-    return tau + swing_attitude_torque(state, leg, dyn, touchdown_yaw, cfg)
+    return tau + swing_attitude_torque(state, leg, dyn, touchdown_yaw, cfg, yaw_des, yaw_rate_des, torso_wz)
 
 
 # ---------------------------------------------------------------------------

@@ -74,6 +74,9 @@ class LegRuntime:
     touchdown_yaw: float = 0.0
     was_in_stance: bool = True
     was_search: bool = False
+    yaw_lo: float = math.nan      # 변형 yawtraj (Q&A 9/29 Q1): 이륙 순간 발 yaw · 시각 · yaw 궤적 길이
+    t_lo: float = math.nan
+    T_yaw: float = math.nan
 
 
 def _rpy_to_quat(r, p, y) -> np.ndarray:
@@ -270,6 +273,7 @@ class MitController:
                 if not rt.was_search or not rt.traj.active:
                     rt.touchdown_yaw = yaw_with_psi_offset(psi_dot, leg, fallback_yaw)
                     rt.traj.reset(p_now, target, 0.0, T)
+                    self._mark_liftoff_yaw(rt, state, leg, t, T)
                 else:
                     rt.traj.set_final_position(target)
                     rt.traj.advance(dt)
@@ -281,6 +285,7 @@ class MitController:
             if rt.was_in_stance or not rt.traj.active:
                 rt.touchdown_yaw = yaw_with_psi_offset(psi_dot, leg, fallback_yaw)
                 rt.traj.reset(p_now, target, self.swing_height, T)
+                self._mark_liftoff_yaw(rt, state, leg, t, T)
             else:
                 rt.traj.set_final_position(target)
                 rt.traj.advance(dt)
@@ -337,6 +342,30 @@ class MitController:
         info["mode"] = self.mode
         self.last_info = info
         return info
+
+    def _mark_liftoff_yaw(self, rt, state, leg, t, T):
+        """변형 yawtraj: 스윙 시작 순간의 발 yaw · 시각 · 궤적 길이 (스윙 시간 × 비율) 를 기억."""
+        frac = cfg_get(self.cfg, "swing.yaw_trajectory_fraction", None)
+        if not frac:
+            return
+        R = state.foot_R_W[leg]
+        rt.yaw_lo = float(np.arctan2(R[1, 0], R[0, 0]))
+        rt.t_lo = float(t)
+        rt.T_yaw = max(1e-3, float(frac) * float(T))
+
+    def _swing_yaw_ref(self, rt, t):
+        """변형 yawtraj (Q&A 9/29 Q1): 착지 yaw 를 한 번에 목표로 주는 대신 최소 저크 곡선으로 보간.
+        s = (t − t_lo)/T_yaw ∈ [0,1], ψ_des = ψ_lo + Δ·(10s³ − 15s⁴ + 6s⁵), ψ̇_des = Δ·(30s² − 60s³ + 30s⁴)/T_yaw,
+        Δ = wrap(ψ_td − ψ_lo). 꺼져 있으면 (None, 0) → reference (목표 = ψ_td, 속도 목표 0)."""
+        if not cfg_get(self.cfg, "swing.yaw_trajectory_fraction", None) or not np.isfinite(rt.yaw_lo):
+            return None, 0.0
+        s = min(max((float(t) - rt.t_lo) / rt.T_yaw, 0.0), 1.0)
+        ff = int(cfg_get(self.cfg, "swing.yaw_trajectory_ff", 1))     # yawff: 0 위치만, 1 속도 목표 − 실측 몸통 ω_z, 2 − 명령 ψ̇
+        dpsi = (rt.touchdown_yaw - rt.yaw_lo + np.pi) % (2.0 * np.pi) - np.pi
+        yaw_des = rt.yaw_lo + dpsi * (10 * s**3 - 15 * s**4 + 6 * s**5)
+        if not ff:
+            return yaw_des, None                    # None → 속도항은 reference 그대로 (다리 상대 속도 감쇠)
+        return yaw_des, (dpsi * (30 * s**2 - 60 * s**3 + 30 * s**4) / rt.T_yaw if s < 1.0 else 0.0)
 
     def _second_footholds(self, ref, steps, foot_yaw):
         """변형 'foot2' (Q&A 9/28 Q10): reference 는 다리당 발 위치 하나를 지평 전체에 쓴다 (RT:65-66).
@@ -408,8 +437,13 @@ class MitController:
             if self._active(leg, t):
                 tau[leg] = walking_stance_torque(dyn, state, leg, self.u_hold, self._alpha(leg), rt.touchdown_yaw, cfg)
             else:
+                yaw_des, yaw_rate_des = self._swing_yaw_ref(rt, t)
+                ff_mode = int(cfg_get(cfg, "swing.yaw_trajectory_ff", 1))
+                torso_ref = float(self.filtered.psi_dot) if ff_mode == 2 else float(state.torso_angvel_W[2])
                 tau[leg] = swing_torque(dyn, state, leg, rt.traj.position(), rt.traj.velocity(),
-                                        rt.traj.acceleration(), rt.touchdown_yaw, cfg)
+                                        rt.traj.acceleration(), rt.touchdown_yaw, cfg,
+                                        yaw_des=yaw_des, yaw_rate_des=yaw_rate_des,
+                                        torso_wz=torso_ref)   # yawff=2: 몸통 회전은 명령 ψ̇ 로 (Q&A 9/29 Q1)
         return tau
 
     # ------------------------------------------------------------------------------------------------------------
