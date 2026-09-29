@@ -140,6 +140,8 @@ def parse_variant(s: str | None) -> dict:
         elif k == "push":                          # 외란 (Q&A 9/29 Q11, 교수님 지시): Fx:Fy:t0:dur — 진행 방향 기준 [N],
             f_ = [float(x) for x in str(v).split(":")]   # t0 = 측정 창 시작 (걷기 시작 / 서기면 0) 뒤 [s], dur [s]. 몸통 CoM 에 가함
             kw["push"] = tuple(f_ + [10.0, 0.2][len(f_) - 2:]) if len(f_) < 4 else tuple(f_)
+        elif k == "swwn":                          # 스윙 고유진동수 배율 (기본 1 = [151, 151, 110] rad/s) — Q&A 9/30 Q5
+            kw.setdefault("swing_over", {})["natural_frequency"] = [151.0 * float(v), 151.0 * float(v), 110.0 * float(v)]
         elif k == "wf":                            # 걷기 입력 가중치의 수평력 (Fx, Fy ×2, 기본 0.001) — 두 발 내력 억제 (Q&A 9/29 Q12)
             kw["w_force_xy"] = float(v)
         elif k == "pushrep":                       # 외란 반복 주기 [s] (0 = 한 번) — push 와 함께
