@@ -137,6 +137,8 @@ def parse_variant(s: str | None) -> dict:
         elif k == "push":                          # 외란 (Q&A 9/29 Q11, 교수님 지시): Fx:Fy:t0:dur — 진행 방향 기준 [N],
             f_ = [float(x) for x in str(v).split(":")]   # t0 = 측정 창 시작 (걷기 시작 / 서기면 0) 뒤 [s], dur [s]. 몸통 CoM 에 가함
             kw["push"] = tuple(f_ + [10.0, 0.2][len(f_) - 2:]) if len(f_) < 4 else tuple(f_)
+        elif k == "pushrep":                       # 외란 반복 주기 [s] (0 = 한 번) — push 와 함께
+            kw["push_repeat"] = float(v)
         elif k == "stand":                         # 서기 시험 (FSM 서기 고정, 시간 0 부터)
             kw["stand"] = bool(int(v))
         elif k == "xpath":                         # MPC 앞뒤 위치 참조를 경로선 쪽으로 (뒤처진 만큼 × a, ±5 cm, 기본 0 — Q&A 9/29 Q4)
@@ -500,13 +502,28 @@ def _fell(d) -> bool:
     return d.qpos[2] < FALL_Z or abs(r) > FALL_ANGLE or abs(p) > FALL_ANGLE
 
 
+def _push_active(push, push_repeat, t_rel) -> bool:
+    """외란 (Q&A 9/29 Q11): t_rel = 측정 창 시작 뒤 시각. push = (Fx, Fy, t0, dur), push_repeat = 반복 주기 (0 = 한 번)."""
+    tr = t_rel - push[2]
+    if tr < 0.0:
+        return False
+    if push_repeat and push_repeat > 0.0:
+        tr = tr % push_repeat
+    return tr < push[3]
+
+
+def _push_world(Fx, Fy, yaw):
+    c_, s_ = np.cos(yaw), np.sin(yaw)
+    return np.array([c_ * Fx - s_ * Fy, s_ * Fx + c_ * Fy, 0.0])
+
+
 def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True, profile="const",
              markers=False, stand=False, friction_scale=1.0, fsm_double_update=True, osqp_settings=None, log=False,
              variant=None, verbose=True, print_every=10.0, keep_record=False, fixes=(), x_dot_max=None, k_half=None,
              foot_model="ref", mpc_mu=None, stand_yaw_hold=True, stand_bias=True, side_swap=False, raibert_gain=0.0,
              ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None, sim_cone=None,
              yaw_hold=None, yaw_lead=None, point_fmin=None, k_half_y=None, swing_over=None, xpath=0.0,
-             raw_over=None, push=None):
+             raw_over=None, push=None, push_repeat=0.0):
     """walking seconds 동안 (시뮬 = settle + seconds). 반환 dict (metrics + fell 등).
 
     push = (Fx, Fy, t0, dur): 진행 방향 (몸통 yaw) 기준 수평력 [N] 을 측정 창 시작 + t0 부터 dur 동안 몸통 CoM 에 가한다."""
@@ -537,10 +554,8 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
         model.write_torque(tau_leg, tau_arm)
         rec.add(ctl, tau_leg, tau_arm)
         if push is not None:                      # 외란: 몸통 CoM 에 수평력 (xfrc_applied 는 월드 좌표, CoM 에 작용)
-            t_rel = d.time - (0.0 if stand else walk_t) - push[2]
-            if 0.0 <= t_rel < push[3]:
-                c_, s_ = np.cos(ctl.state.yaw_unwrapped), np.sin(ctl.state.yaw_unwrapped)
-                d.xfrc_applied[model.base_body, 0:3] = (c_ * push[0] - s_ * push[1], s_ * push[0] + c_ * push[1], 0.0)
+            if _push_active(push, push_repeat, d.time - (0.0 if stand else walk_t)):
+                d.xfrc_applied[model.base_body, 0:3] = _push_world(push[0], push[1], ctl.state.yaw_unwrapped)
             else:
                 d.xfrc_applied[model.base_body, :] = 0.0
         mujoco.mj_step(m, d)
@@ -561,7 +576,7 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
     res["survived"] = max(0.0, float(d.time) - (0.0 if stand else walk_t))   # 마지막 mj_step 뒤 시각
     res.update(fell=fell, error=err, wall=wall, vx_cmd=vx, vy_cmd=vy, wz_cmd=wz, seconds=seconds,
                variant=variant or "base", solver=solver, armature=armature, profile=profile, markers=markers,
-               transitions=ctl.transitions, t_end=float(d.time), push=push)
+               transitions=ctl.transitions, t_end=float(d.time), push=push, push_repeat=push_repeat)
     res["pass"] = (not fell) and res["survived"] >= seconds - 1e-6
     if log:
         tag = _tag(vx, vy, wz, variant) + ("_stand" if stand else "")
@@ -651,11 +666,30 @@ def _draw_refs(v, ctl, n_seg=16):
 
 def view(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True, profile="const", markers=False,
          stand=False, friction_scale=1.0, fsm_double_update=True, follow=True, fixes=(), x_dot_max=None,
-         foot_model="ref", raibert_gain=0.0, ypos_gain=0.0, ypath=0.0, arm_swing=0.0, **setup_kw):
-    """setup_kw: _setup 의 나머지 변형 인자 (osqp_settings, yaw_lead, cop_half … — parse_variant 결과 그대로)."""
+         foot_model="ref", raibert_gain=0.0, ypos_gain=0.0, ypath=0.0, arm_swing=0.0, push=None, push_repeat=0.0,
+         push_mag=30.0, push_dur=0.2, **setup_kw):
+    """setup_kw: _setup 의 나머지 변형 인자 (osqp_settings, yaw_lead, cop_half … — parse_variant 결과 그대로).
+
+    외란 (Q&A 9/29 Q11):
+      스크립트  --var push=Fx:Fy:t0:dur[,pushrep=T] — 헤드리스 시험과 같은 정의 (몸 yaw 기준, 몸통 CoM)
+      키보드    ↑ 앞 · ↓ 뒤 · ← 왼 · → 오른 으로 push_mag [N] 을 push_dur [s] 동안. PageUp / PageDown = ±10 N
+      미는 동안 몸통에 빨간 화살표 (1 cm/N), HUD 에 크기 · 상태 표시.
+    """
     import threading
     import mujoco.viewer
     from viewer_hud import MitHUD
+    KEY = {265: (1.0, 0.0, "fwd"), 264: (-1.0, 0.0, "back"), 263: (0.0, 1.0, "left"), 262: (0.0, -1.0, "right")}
+    ps = dict(mag=float(push_mag), req=None, until=-1.0, F=(0.0, 0.0), label="", n=0)
+
+    def on_key(code):                                           # 뷰어 스레드 — 요청만 남기고 적용은 시뮬 루프에서
+        if code in KEY:
+            ux, uy, name = KEY[code]
+            ps["req"] = (ux * ps["mag"], uy * ps["mag"], f"{name} {ps['mag']:.0f} N")
+        elif code == 266:
+            ps["mag"] = min(ps["mag"] + 10.0, 200.0)
+        elif code == 267:
+            ps["mag"] = max(ps["mag"] - 10.0, 0.0)
+
     cfg, model, ctl, walk_t = _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale,
                                      fsm_double_update, verbose=True, fixes=fixes, x_dot_max=x_dot_max,
                                      foot_model=foot_model, raibert_gain=raibert_gain, ypos_gain=ypos_gain, ypath=ypath,
@@ -664,7 +698,8 @@ def view(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True,
     total = (0.0 if stand else walk_t) + seconds
     sync_every = 17
     before = set(threading.enumerate())
-    with mujoco.viewer.launch_passive(m, d) as v:
+    print("  외란: ↑ 앞 · ↓ 뒤 · ← 왼 · → 오른 (0.2 s), PageUp/PageDown ±10 N" + (f", 스크립트 {push}" if push else ""))
+    with mujoco.viewer.launch_passive(m, d, key_callback=on_key) as v:
         ui_threads = [t for t in threading.enumerate() if t not in before]
         hud = MitHUD(m, model.base_body)
         if follow:
@@ -675,19 +710,48 @@ def view(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True,
             v.cam.azimuth = 135
         t_wall0 = time.perf_counter()
         k = 0
+        was_pushing = False
         while v.is_running() and d.time < total:
             tau_leg, tau_arm = ctl.tick()
             model.write_torque(tau_leg, tau_arm)
+            if ps["req"] is not None:                           # 키보드 밀기 시작
+                fx_, fy_, lab = ps["req"]
+                ps.update(req=None, until=d.time + float(push_dur), F=(fx_, fy_), label=lab, n=ps["n"] + 1)
+                print(f"  [push #{ps['n']}] t {d.time:6.2f}  {lab}  {push_dur:.2f} s")
+            F_B = None
+            if d.time < ps["until"]:
+                F_B = ps["F"]
+            elif push is not None and _push_active(push, push_repeat, d.time - (0.0 if stand else walk_t)):
+                F_B = (push[0], push[1])
+                ps["label"] = f"script {push[0]:+.0f},{push[1]:+.0f} N"
+            if F_B is not None:                                 # 몸통 CoM 에 수평력 (몸 yaw 기준 → 월드)
+                d.xfrc_applied[model.base_body, 0:3] = _push_world(F_B[0], F_B[1], ctl.state.yaw_unwrapped)
+                was_pushing = True
+            elif was_pushing:                                   # 끝날 때 한 번만 0 (마우스 섭동은 건드리지 않음)
+                d.xfrc_applied[model.base_body, :] = 0.0
+                was_pushing = False
             mujoco.mj_step(m, d)
             k += 1
             if _fell(d):
                 print(f"fell at t = {d.time:.2f}")
                 break
             f = ctl.filtered
-            hud.update(v, d, d.time, k, cmd=(f.x_dot, f.y_dot, f.psi_dot), mode=ctl.fsm.state.value)
+            hud.update(v, d, d.time, k, cmd=(f.x_dot, f.y_dot, f.psi_dot), mode=ctl.fsm.state.value,
+                       extra=[("push (arrows, PgUp/Dn)",
+                               f"{ps['mag']:.0f} N" + (f"  ACTIVE: {ps['label']}" if F_B is not None else ""))])
             if k % sync_every == 0:
                 with v.lock():
                     _draw_refs(v, ctl)                      # 참조 오버레이 (Q&A 9/26 Q7 후속 분석용)
+                    if F_B is not None:                     # 외란 화살표 (1 cm/N, 빨강)
+                        scn = v.user_scn
+                        if scn.ngeom < scn.maxgeom:
+                            p0 = d.xipos[model.base_body].copy()
+                            Fw = _push_world(F_B[0], F_B[1], ctl.state.yaw_unwrapped)
+                            g = scn.geoms[scn.ngeom]
+                            mujoco.mjv_initGeom(g, mujoco.mjtGeom.mjGEOM_ARROW, np.zeros(3), np.zeros(3),
+                                                np.eye(3).flatten(), np.array([1.0, 0.1, 0.1, 1.0], np.float32))
+                            mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_ARROW, 0.02, p0 - 0.01 * Fw, p0)
+                            scn.ngeom += 1
                 v.sync()
                 lag = d.time - (time.perf_counter() - t_wall0)
                 if lag > 0:

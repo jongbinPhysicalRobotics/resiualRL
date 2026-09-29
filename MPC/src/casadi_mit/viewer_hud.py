@@ -22,7 +22,7 @@ class MitHUD:
         self.hist = collections.deque()
         self.wall0 = _time.perf_counter()
 
-    def update(self, viewer, d, t, k, cmd=(0.0, 0.0, 0.0), mode=""):
+    def update(self, viewer, d, t, k, cmd=(0.0, 0.0, 0.0), mode="", extra=()):
         if k % self.every:
             return
         mujoco.mj_subtreeVel(self.m, d)
@@ -54,5 +54,8 @@ class MitHUD:
             if abs(cmd[i]) > 1e-6:
                 line += f"  ({100.0 * avg[i] / cmd[i]:4.0f} %)"
             values.append(line)
+        for lab, val in extra:                                           # 추가 줄 (외란 상태 등, Q&A 9/29 Q11)
+            labels.append(str(lab))
+            values.append(str(val))
         viewer.set_texts((mujoco.mjtFontScale.mjFONTSCALE_150, mujoco.mjtGridPos.mjGRID_TOPLEFT,
                           "\n".join(labels), "\n".join(values)))
