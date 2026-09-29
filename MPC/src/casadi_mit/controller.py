@@ -31,6 +31,7 @@
     osqp_settings    None (변형: OSQP 설정 덮어쓰기, 예 {"adaptive_rho_interval": 50})
     fixes            () — reference 특이점 고침 (변형, 기본 없음 = 충실한 포팅). 9/25 충실한 포팅이 세 목표를 못 넘어서 시험:
         "slide"      지평 접촉표를 cycle 원점이 아니라 지금부터 (tk = t + k·dt) — O1
+        "half"       지평 접촉표 원점을 반 주기 (한 걸음) 마다 옮김 — O1 의 좌우 비대칭 완화 (Q&A 9/29 Q11)
         "yawref"     walking 에서 MPC yaw 참조를 측정 yaw 가 아니라 body target yaw (명령 적분) 로 — 방향 유지 (O4)
         "yawanchor"  swing planner 의 몸 yaw 를 명령 적분 대신 측정 yaw 로 — 흘러간 방향을 따라감 (O4 의 반대 선택)
 """""
@@ -110,7 +111,7 @@ class MitController:
                                                      # 순수 Jᵀ wrench 는 다리 자중을 안 보상해 발이 평행하게 안으로 크리프 (60 s 에 65 mm)
         self.stand_yaw_hold = bool(stand_yaw_hold)   # 서기에서도 발 yaw holdQ&A 9/26 Q6:
                                                      # 서기는 관절 PD 가 없어 hip yaw 가 자유 내부 자유도 → 60 s 에 발 뒤꿈치가 140 mm 모임)
-        unknown = self.fixes - {"slide", "yawref", "yawanchor", "foot2"}
+        unknown = self.fixes - {"slide", "yawref", "yawanchor", "foot2", "half"}
         if unknown:
             raise ValueError(f"unknown fixes {sorted(unknown)}")
         self.model = model
@@ -294,7 +295,11 @@ class MitController:
             foot_yaw = np.array([mpc_foot_yaw(state, leg, bool(active[leg]), self.legs[leg].touchdown_yaw)
                                  for leg in LEGS])
             override = self.cm.build_horizon_override() if self.mode == "walking" else None
-            steps = self.gait.horizon_steps(self.clock, override, t_now=t if "slide" in self.fixes else None)
+            t_tab = t if "slide" in self.fixes else None
+            if "half" in self.fixes and t_tab is None:             # 변형 half (Q&A 9/29 Q11): 접촉표 원점을 반 주기 (한 걸음) 마다 옮김
+                half = 0.5 * float(self.clock.cycle)               # — O1 (주기 원점) 은 두 다리의 어긋남이 달라 좌우 비대칭 (9/26 Q7)
+                t_tab = self.clock.t0 + (half if t - self.clock.t0 >= half else 0.0)
+            steps = self.gait.horizon_steps(self.clock, override, t_now=t_tab)
             seed = x0.copy()
             dz = self.wb_dz or 0.0                                 # 변형 wbcom: 전신 CoM 은 몸통 CoM 보다 dz 낮다
             if self.mode == "standing":

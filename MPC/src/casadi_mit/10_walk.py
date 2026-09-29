@@ -134,6 +134,11 @@ def parse_variant(s: str | None) -> dict:
                     "wbcom": "mpc.whole_body_com", "swh": "swing.height",
                     "tors": "mpc.torsional_friction_scale", "nbs": "mpc.iterations_between_solve"}[k]
             kw.setdefault("raw_over", {})[path] = float(v)
+        elif k == "push":                          # 외란 (Q&A 9/29 Q11, 교수님 지시): Fx:Fy:t0:dur — 진행 방향 기준 [N],
+            f_ = [float(x) for x in str(v).split(":")]   # t0 = 측정 창 시작 (걷기 시작 / 서기면 0) 뒤 [s], dur [s]. 몸통 CoM 에 가함
+            kw["push"] = tuple(f_ + [10.0, 0.2][len(f_) - 2:]) if len(f_) < 4 else tuple(f_)
+        elif k == "stand":                         # 서기 시험 (FSM 서기 고정, 시간 0 부터)
+            kw["stand"] = bool(int(v))
         elif k == "xpath":                         # MPC 앞뒤 위치 참조를 경로선 쪽으로 (뒤처진 만큼 × a, ±5 cm, 기본 0 — Q&A 9/29 Q4)
             kw["xpath"] = float(v)
         elif k == "ypath":                         # MPC 옆 위치 참조를 경로선 쪽으로 (0 ~ 1, 기본 0 — Q&A 9/27 Q2)
@@ -501,8 +506,10 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
              foot_model="ref", mpc_mu=None, stand_yaw_hold=True, stand_bias=True, side_swap=False, raibert_gain=0.0,
              ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None, sim_cone=None,
              yaw_hold=None, yaw_lead=None, point_fmin=None, k_half_y=None, swing_over=None, xpath=0.0,
-             raw_over=None):
-    """walking seconds 동안 (시뮬 = settle + seconds). 반환 dict (metrics + fell 등)."""
+             raw_over=None, push=None):
+    """walking seconds 동안 (시뮬 = settle + seconds). 반환 dict (metrics + fell 등).
+
+    push = (Fx, Fy, t0, dur): 진행 방향 (몸통 yaw) 기준 수평력 [N] 을 측정 창 시작 + t0 부터 dur 동안 몸통 CoM 에 가한다."""
     cfg, model, ctl, walk_t = _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale,
                                      fsm_double_update, verbose=False, osqp_settings=osqp_settings, fixes=fixes,
                                      x_dot_max=x_dot_max, k_half=k_half, foot_model=foot_model, mpc_mu=mpc_mu,
@@ -529,6 +536,13 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
             break
         model.write_torque(tau_leg, tau_arm)
         rec.add(ctl, tau_leg, tau_arm)
+        if push is not None:                      # 외란: 몸통 CoM 에 수평력 (xfrc_applied 는 월드 좌표, CoM 에 작용)
+            t_rel = d.time - (0.0 if stand else walk_t) - push[2]
+            if 0.0 <= t_rel < push[3]:
+                c_, s_ = np.cos(ctl.state.yaw_unwrapped), np.sin(ctl.state.yaw_unwrapped)
+                d.xfrc_applied[model.base_body, 0:3] = (c_ * push[0] - s_ * push[1], s_ * push[0] + c_ * push[1], 0.0)
+            else:
+                d.xfrc_applied[model.base_body, :] = 0.0
         mujoco.mj_step(m, d)
         if _fell(d):
             fell = True
@@ -547,7 +561,7 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
     res["survived"] = max(0.0, float(d.time) - (0.0 if stand else walk_t))   # 마지막 mj_step 뒤 시각
     res.update(fell=fell, error=err, wall=wall, vx_cmd=vx, vy_cmd=vy, wz_cmd=wz, seconds=seconds,
                variant=variant or "base", solver=solver, armature=armature, profile=profile, markers=markers,
-               transitions=ctl.transitions, t_end=float(d.time))
+               transitions=ctl.transitions, t_end=float(d.time), push=push)
     res["pass"] = (not fell) and res["survived"] >= seconds - 1e-6
     if log:
         tag = _tag(vx, vy, wz, variant) + ("_stand" if stand else "")

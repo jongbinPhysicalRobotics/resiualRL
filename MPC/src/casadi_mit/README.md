@@ -58,6 +58,9 @@ GAIT_ON=1 .venv/bin/python MPC/src/casadi_mit/13_foot_diag.py --vx 0.65 --profil
 — 옆 0.3 · 회전 1.3 (선행 0/0.5/1) · 1.5 · 걸으며 돌기 0.3~0.6+0.5 · 0.3+1.0 · 전진 0.65~0.7 모두 120 s 완주 (고정 50 회 — 잔차 학습 쪽 후보).
 ⚠ 0.75 이상은 `xmax=1.0` 을 줘야 한다 (yaml x_dot_max 0.7 로 잘림 — Q&A 9/29 Q9).
 
+**후보 A8 (9/29 Q11, 최신)**: A7 에서 `fix=half+yawref,khalf=0.3` — 접촉표 원점을 반 주기마다 옮겨 곧은 걸음 좌우 비대칭 (vy) 해소, 14/14 완주.
+외란 시험 키: `push=Fx:Fy:t0:dur` (몸통 CoM, 몸 yaw 기준 N, 측정 창 시작 뒤 t0 초, dur 초), `stand=1` (서기).
+
 **후보 A7 (9/29 Q10, 고정 25 회 · 10 ms — 잔차 학습 쪽)**: `--var profile=ramp,fix=yawref,ypath=0.3,init=warm,khalf=0.37,yawtraj=1.0,yawff=2,psioff=0,rai=0.2,vdir=0.7,admm=25,nbs=5,rho=5e-5,hor=0.44,fref=1e-3,armsw=0.3,xmax=1.0,yawlead=0.5`
 — A6 와 같은 14 개 목표 전부 120 s 완주 (전진 0.8 실측 0.73, 걸으며 돌기 0.7+0.5). `nbs` = 몇 틱마다 MPC 를 푸나 (기본 7), `tors` = 비틀림 계수.
 
