@@ -274,6 +274,8 @@ class SwingFootPlanner:
         self.v_int_t = None
         self.v_filt = None                           # 변형 vdir (Q&A 9/29 Q7): 실측 속도 1 차 저역통과 (τ 0.25 s)
         self.v_filt_t = None
+        self.stride_gain = (float(cfg_get(cfg, "swing.raibert_stride_gain_x", 0.0) or 0.0),   # 변형 raisx · rais (Q&A 9/29 Q8)
+                            float(cfg_get(cfg, "swing.raibert_stride_gain_y", 0.0) or 0.0))
         self.cycle, self.swing_time, self.stance_time, _, _, _ = timing_params(cfg)
         offs = cfg_get(cfg, "swing.nominal_foot_offsets_B", None)
         if offs is not None and len(offs) > 0:
@@ -301,6 +303,8 @@ class SwingFootPlanner:
         self.v_int_t = None
         self.v_filt = None
         self.v_filt_t = None
+        self.v_hist = []                             # 변형 rais: (t, v_앞, v_옆) 목표 yaw 기준, 한 주기
+        self.v_stride = None                         # 한 주기 평균 (좌우 흔들림 제거) — 없으면 None
         self.touchdown_valid = [False, False]
         self.nominal_offsets_B = np.zeros((2, 3))
         self.nominal_offset_valid = [False, False]
@@ -448,6 +452,10 @@ class SwingFootPlanner:
         if self.raibert_int_gain > 0.0:           # 변형 raii (Q&A 9/29 Q5): Δp += K_i ∫(v_meas − v_cmd) dt
             ci = self.raibert_int_gain * self.v_int
             planned_B = planned_B + _rzT_mul(yaw0, np.array([ci[0], ci[1], 0.0]))
+        if self.v_stride is not None and not stop_recenter:   # 변형 rais · raisx (Q&A 9/29 Q8): 한 주기 평균 속도 오차로 Raibert
+            for i_, (k_, vc_) in enumerate(zip(self.stride_gain, (px, py))):   # — 순간 속도 (raiy) 는 걸음 흔들림에 과반응했다
+                if k_:
+                    planned_B[i_] += min(max(k_ * (self.v_stride[i_] - vc_), -0.08), 0.08)
         if self.ypos_gain > 0.0:                  # 옆 위치 되먹임 (Q&A 9/27 Q2): 밀린 쪽으로 더 내딛기 (+부호)
             planned_B[1] += min(max(self.ypos_gain * self.lat_err, -self.ypos_max), self.ypos_max)
         # 좌우 교차 방지 (lateral crossing guard)
@@ -477,6 +485,14 @@ class SwingFootPlanner:
                 a_ = min(1.0, max(0.0, t - self.v_filt_t) / 0.25)
                 self.v_filt = self.v_filt + a_ * (vm - self.v_filt)
             self.v_filt_t = t
+        if self.stride_gain[0] or self.stride_gain[1]:   # 변형 rais: 한 주기 이동평균 (걸음마다 좌우 흔들림은 주기 성분이라 0)
+            vh = _rzT_mul(self.body_yaw_target_world(state), np.array([x0[9], x0[10], 0.0]))
+            self.v_hist.append((t, float(vh[0]), float(vh[1])))
+            while self.v_hist and t - self.v_hist[0][0] > self.cycle:
+                self.v_hist.pop(0)
+            if t - self.v_hist[0][0] >= 0.95 * self.cycle:
+                a_ = np.asarray(self.v_hist)
+                self.v_stride = (float(a_[:, 1].mean()), float(a_[:, 2].mean()))
         if self.raibert_int_gain > 0.0:                  # 변형 raii: 속도 오차 적분 (클램프 → K_i·∫ ≤ 5 cm)
             if self.v_int_t is not None:
                 yaw_c = self.body_yaw_target_world(state)
