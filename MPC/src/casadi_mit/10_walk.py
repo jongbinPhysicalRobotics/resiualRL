@@ -124,7 +124,7 @@ def parse_variant(s: str | None) -> dict:
             kw["stand_yaw_hold"] = bool(int(v))
         elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
             kw["arm_swing"] = float(v)
-        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
+        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
             path = {"tdz": "swing.touchdown_z", "fref": "mpc.force_ref_weight", "tswing": "timing.swing",
                     "tcycle": "timing.cycle", "hor": "timing.horizon", "kdz": "swing.kd_zeta",
                     "raii": "swing.raibert_int_gain", "psioff": "swing.psi_offset_scale",
@@ -136,11 +136,14 @@ def parse_variant(s: str | None) -> dict:
                     "tors": "mpc.torsional_friction_scale", "nbs": "mpc.iterations_between_solve",
                     "minw": "swing.min_step_width", "replan": "swing.replan",
                     "rvwb": "swing.raibert_vel_wholebody", "rpfz": "swing.replan_freeze", "swprof": "swing.xy_profile_ramp", "swlim": "swing.torque_limit_mode",
-                    "wmax": "user_command_filter.psi_dot_max", "ymax": "user_command_filter.y_dot_max"}[k]
+                    "wmax": "user_command_filter.psi_dot_max", "ymax": "user_command_filter.y_dot_max",
+                    "shw": "swing.stance_yaw_fade_rate"}[k]
             kw.setdefault("raw_over", {})[path] = float(v)
         elif k == "push":                          # 외란 (Q&A 9/29 Q11, 교수님 지시): Fx:Fy:t0:dur — 진행 방향 기준 [N],
             f_ = [float(x) for x in str(v).split(":")]   # t0 = 측정 창 시작 (걷기 시작 / 서기면 0) 뒤 [s], dur [s]. 몸통 CoM 에 가함
             kw["push"] = tuple(f_ + [10.0, 0.2][len(f_) - 2:]) if len(f_) < 4 else tuple(f_)
+        elif k in ("shkp", "shkd"):                # 딛는 발 yaw hold 이득 (기본 yaml 20 / 4) — Q&A 9/30 Q10
+            kw.setdefault("swing_over", {})["stance_yaw_kp" if k == "shkp" else "stance_yaw_kd"] = float(v)
         elif k == "swwn":                          # 스윙 고유진동수 배율 (기본 1 = [151, 151, 110] rad/s) — Q&A 9/30 Q5
             kw.setdefault("swing_over", {})["natural_frequency"] = [151.0 * float(v), 151.0 * float(v), 110.0 * float(v)]
         elif k == "symcom":                        # 진단 전용 (Q&A 9/30 Q7): 몸통 무게중심 y 를 0 으로 (모델 좌우 대칭화)

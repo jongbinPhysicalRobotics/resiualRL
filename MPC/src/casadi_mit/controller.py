@@ -447,7 +447,15 @@ class MitController:
             rt = self.legs[leg]
             dyn = self.model.leg_dynamics(leg)
             if self._active(leg, t):
-                tau[leg] = walking_stance_torque(dyn, state, leg, self.u_hold, self._alpha(leg), rt.touchdown_yaw, cfg)
+                gains = None
+                w_fade = float(cfg_get(cfg, "swing.stance_yaw_fade_rate", 0.0) or 0.0)   # 변형 shw (Q&A 9/30 Q10):
+                if w_fade > 0.0:                                   # 회전 명령 |ψ̇| 이 클수록 yaw hold 이득을 reference 값 (20 / 4) 쪽으로
+                    f_ = max(0.0, 1.0 - abs(float(self.filtered.psi_dot)) / w_fade)
+                    kp_s = float(cfg_get(cfg, "swing.stance_yaw_kp", 20.0))
+                    kd_s = float(cfg_get(cfg, "swing.stance_yaw_kd", 4.0))
+                    gains = (20.0 + f_ * (kp_s - 20.0), 4.0 + f_ * (kd_s - 4.0))
+                tau[leg] = walking_stance_torque(dyn, state, leg, self.u_hold, self._alpha(leg), rt.touchdown_yaw, cfg,
+                                                 yaw_hold_gains=gains)
             else:
                 yaw_des, yaw_rate_des = self._swing_yaw_ref(rt, t)
                 ff_mode = int(cfg_get(cfg, "swing.yaw_trajectory_ff", 1))

@@ -47,7 +47,7 @@ def stance_torque(dyn, F_W, M_W) -> np.ndarray:
     return np.asarray(dyn.Jv).T @ np.asarray(F_W, dtype=float) + np.asarray(dyn.Jw).T @ np.asarray(M_W, dtype=float)
 
 
-def stance_yaw_hold_moment_z(state, leg: int, dyn, touchdown_yaw: float, cfg) -> float:
+def stance_yaw_hold_moment_z(state, leg: int, dyn, touchdown_yaw: float, cfg, gains=None) -> float:
     """computeStanceYawHoldMomentWorld (My_Controller.cpp:86-117) 의 z 성분 (x,y 는 항상 0).
 
     x̂_proj = 수평 투영·정규화한 발 SITE x축, d̂ = [cos ψ_td, sin ψ_td, 0]
@@ -57,6 +57,8 @@ def stance_yaw_hold_moment_z(state, leg: int, dyn, touchdown_yaw: float, cfg) ->
     """
     kp = float(_cfg(cfg, "swing.stance_yaw_kp", 0.0))
     kd = float(_cfg(cfg, "swing.stance_yaw_kd", 0.0))
+    if gains is not None:                        # 변형 shw (Q&A 9/30 Q10): 호출자가 회전 명령에 따라 조정한 이득
+        kp, kd = float(gains[0]), float(gains[1])
     if not (kp > 0.0 or kd > 0.0) or not np.isfinite(touchdown_yaw):
         return 0.0
     Jw = np.asarray(dyn.Jw)
@@ -75,7 +77,8 @@ def stance_yaw_hold_moment_z(state, leg: int, dyn, touchdown_yaw: float, cfg) ->
     return float(kp * err - kd * rate)
 
 
-def walking_stance_torque(dyn, state, leg: int, u0, alpha: float, touchdown_yaw: float, cfg) -> np.ndarray:
+def walking_stance_torque(dyn, state, leg: int, u0, alpha: float, touchdown_yaw: float, cfg,
+                          yaw_hold_gains=None) -> np.ndarray:
     """writeLegCommands stance 가지 (My_Controller.cpp:1315-1350) + stance_torque.
     F = −α u0[F_leg], M = −α u0[M_leg]; enable_stance_foot_yaw_hold 이고 α > 0 이면 M.z += α·m_z."""
     u0 = np.asarray(u0, dtype=float)
@@ -89,7 +92,7 @@ def walking_stance_torque(dyn, state, leg: int, u0, alpha: float, touchdown_yaw:
     two_pt = int(np.asarray(getattr(state, "foot_contact_count", np.full(2, 2)))[leg]) >= 2
     if bool(_cfg(cfg, "swing.enable_stance_foot_yaw_hold", False)) and alpha > 0.0 and (two_pt or not two_pt_only):
         M = M.copy()
-        M[2] += alpha * stance_yaw_hold_moment_z(state, leg, dyn, touchdown_yaw, cfg)
+        M[2] += alpha * stance_yaw_hold_moment_z(state, leg, dyn, touchdown_yaw, cfg, yaw_hold_gains)
     tau = stance_torque(dyn, F, M)
     if bool(_cfg(cfg, "swing.walk_stance_bias", False)):   # 변형 walkbias (Q&A 9/29 Q7): 입각 다리 자중 · 코리올리 보상
         tau = tau + np.asarray(dyn.bias, dtype=float)
