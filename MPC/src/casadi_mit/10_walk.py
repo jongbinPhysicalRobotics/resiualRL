@@ -102,6 +102,8 @@ def parse_variant(s: str | None) -> dict:
             kw.setdefault("osqp_settings", {})["fixed_iter"] = int(v)
         elif k == "init":                          # 고정 반복의 초기 추정: nominal (논문) / warm / zero
             kw.setdefault("osqp_settings", {})["init"] = str(v)
+        elif k == "ruiz":                          # OSQP Ruiz 스케일링 반복 수 (기본 10) — Q&A 9/30 Q16
+            kw.setdefault("osqp_settings", {})["scaling"] = int(v)
         elif k == "rho":                           # OSQP ρ (기본 0.1)
             kw.setdefault("osqp_settings", {})["rho"] = float(v)
         elif k == "dualgap":                       # OSQP check_dualgap (이식 0, reference 실효 1 — Q&A 9/25 Q11)
@@ -124,7 +126,7 @@ def parse_variant(s: str | None) -> dict:
             kw["stand_yaw_hold"] = bool(int(v))
         elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
             kw["arm_swing"] = float(v)
-        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
+        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
             path = {"tdz": "swing.touchdown_z", "fref": "mpc.force_ref_weight", "tswing": "timing.swing",
                     "tcycle": "timing.cycle", "hor": "timing.horizon", "kdz": "swing.kd_zeta",
                     "raii": "swing.raibert_int_gain", "psioff": "swing.psi_offset_scale",
@@ -147,7 +149,8 @@ def parse_variant(s: str | None) -> dict:
                     "uint": "mpc.input_interpolation",          # uint=s: 풀이 사이 u0 → u1 선형 보간, 기울기 배율 s (Q&A 9/30 Q13 · Q15)
                     "uintm": "mpc.input_interpolation_mode",    # uintm=1: 디딤이 바뀌는 다리는 보간 안 함 (Q&A 9/30 Q15)
                     "shabs": "swing.stance_yaw_rate_absolute",  # shabs=1: 딛는 발 yaw hold 감쇠를 절대 yaw 각속도로 (Q&A 9/30 Q13)
-                    "hmpc": "mpc.hold_in_mpc_weight"}[k]        # hmpc=w: yaw hold 를 MPC Mz 참조 비용으로 (yawhold=0 과 함께, Q&A 9/30 Q14)
+                    "hmpc": "mpc.hold_in_mpc_weight",           # hmpc=w: yaw hold 를 MPC Mz 참조 비용으로 (yawhold=0 과 함께, Q&A 9/30 Q14)
+                    "msc": "mpc.moment_variable_scale"}[k]      # msc=1: 모멘트 변수를 발 반길이로 나눠 풀기 (해 같음, Q&A 9/30 Q16)
             kw.setdefault("raw_over", {})[path] = float(v)
         elif k == "push":                          # 외란 (Q&A 9/29 Q11, 교수님 지시): Fx:Fy:t0:dur — 진행 방향 기준 [N],
             f_ = [float(x) for x in str(v).split(":")]   # t0 = 측정 창 시작 (걷기 시작 / 서기면 0) 뒤 [s], dur [s]. 몸통 CoM 에 가함

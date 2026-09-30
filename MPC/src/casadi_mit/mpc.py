@@ -407,6 +407,8 @@ class ConvexMPC:
         # 변형 wdu (Q&A 9/30 Q12, 기본 0): 입력 변화 비용 가중치 w — 힘 w, 모멘트 w/l² (두 점 힘으로 쟀을 때 같은 크기, l = 발 반길이)
         self.du_w = float(_cfg(cfg, "mpc.input_rate_weight", 0.0) or 0.0)
         self.hold_w = float(_cfg(cfg, "mpc.hold_in_mpc_weight", 0.0) or 0.0)   # 변형 hmpc (Q&A 9/30 Q14, 기본 0)
+        self.var_scale = bool(int(float(_cfg(cfg, "mpc.moment_variable_scale", 0) or 0)))   # 변형 msc (Q&A 9/30 Q16)
+        self._msc12 = np.array([1.0] * 6 + [float(_cfg(cfg, "mpc.foot_half_length"))] * 6)
         _l = float(_cfg(cfg, "mpc.foot_half_length"))
         self._du_s = np.array([self.du_w] * 3 + [self.du_w / _l ** 2] * 3)
         self._DU_COLS = (np.array([0, 1, 2, 6, 7, 8]), np.array([3, 4, 5, 9, 10, 11]))   # 다리별 [F(3), M(3)] 열
@@ -586,12 +588,20 @@ class ConvexMPC:
             info["build_ms"] = (time.perf_counter() - t_start) * 1e3
             t_solve = time.perf_counter()
             if self.solver_name == "osqp":
-                Px = H[self._P_rows, self._P_cols]
-                Ax = blk.reshape(-1)[self._A_gather]
-                if self.fixed_iter > 0:
-                    U = self._solve_fixed(Px, q, Ax, l, u, sig, stance, float(reduced.mass), info)
+                if self.var_scale:                            # 변형 msc (Q&A 9/30 Q16): 모멘트 변수를 발 반길이로 나눠 힘 단위로
+                    Sv = np.tile(self._msc12, self.N)          # U = S·Ū — 해는 같고 ADMM 이 보는 숫자 크기만 고르게
+                    Hs, qs = H * np.outer(Sv, Sv), q * Sv
+                    blks = blk * self._msc12[None, None, :]
                 else:
-                    U = self._solve_osqp(Px, q, Ax, l, u, sig, info)
+                    Sv, Hs, qs, blks = None, H, q, blk
+                Px = Hs[self._P_rows, self._P_cols]
+                Ax = blks.reshape(-1)[self._A_gather]
+                if self.fixed_iter > 0:
+                    U = self._solve_fixed(Px, qs, Ax, l, u, sig, stance, float(reduced.mass), info)
+                else:
+                    U = self._solve_osqp(Px, qs, Ax, l, u, sig, info)
+                if Sv is not None:
+                    U = U * Sv
             else:
                 U = self._solve_quadprog(H, q, blk, u, sig, info)
             info["solve_ms"] = (time.perf_counter() - t_solve) * 1e3
