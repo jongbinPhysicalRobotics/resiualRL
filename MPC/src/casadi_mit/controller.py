@@ -336,7 +336,10 @@ class MitController:
             if cfg_get(self.cfg, "mpc.whole_body_com", 0.0):      # 변형 wbcom: 질량 = 전체 질량
                 import dataclasses as _dc
                 red = _dc.replace(red, mass=float(self.model.total_mass()))
-            u0, info = self.mpc.solve(x0, ref, steps, foot_yaw, red, self.mode, active=active)
+            mz_ref = None
+            if self.mode == "walking" and float(cfg_get(self.cfg, "mpc.hold_in_mpc_weight", 0.0) or 0.0) > 0.0:
+                mz_ref = self._hold_mz_ref(state, t, active)       # 변형 hmpc (Q&A 9/30 Q14)
+            u0, info = self.mpc.solve(x0, ref, steps, foot_yaw, red, self.mode, active=active, mz_ref=mz_ref)
             info["x_ref0"] = ref.X_ref[0].copy()
             info["stance0"] = np.asarray(steps[0].stance, dtype=bool).copy()
             info["stance_tab"] = np.array([s.stance for s in steps], dtype=bool)
@@ -357,6 +360,33 @@ class MitController:
         info["mode"] = self.mode
         self.last_info = info
         return info
+
+    def _yaw_hold_gains(self):
+        """변형 shw (Q&A 9/30 Q10): 회전 명령 |ψ̇| 에 따라 hold 이득을 reference (20 / 4) 쪽으로. 꺼져 있으면 None (yaml 이득)."""
+        cfg = self.cfg
+        w_fade = float(cfg_get(cfg, "swing.stance_yaw_fade_rate", 0.0) or 0.0)
+        if w_fade <= 0.0:
+            return None
+        f_ = max(0.0, 1.0 - abs(float(self.filtered.psi_dot)) / w_fade)
+        kp_s = float(cfg_get(cfg, "swing.stance_yaw_kp", 20.0))
+        kd_s = float(cfg_get(cfg, "swing.stance_yaw_kd", 4.0))
+        return (20.0 + f_ * (kp_s - 20.0), 4.0 + f_ * (kd_s - 4.0))
+
+    def _hold_mz_ref(self, state, t, active):
+        """변형 hmpc (Q&A 9/30 Q14): 딛는 발 yaw hold 가 원하는 모멘트를 MPC 의 Mz 참조로 (지면 반력 기준 = −m_z, 월드 z).
+        MPC 밖에서 더하던 hold 를 MPC 비용으로 옮긴 것 — 해가 선 접촉 제약 안에 머문다. 안 딛는 다리는 nan."""
+        out = np.full(2, np.nan)
+        gains = self._yaw_hold_gains()
+        for leg in LEGS:
+            if active[leg]:
+                m = stance_yaw_hold_moment_z(state, leg, self.model.leg_dynamics(leg), self.legs[leg].touchdown_yaw,
+                                             self.cfg, gains)
+                # 착지 램프 α 를 곱하고 (MPC 밖 hold 와 같은 크기), 비틀림 한계 μ·l·m·g 로 자른다 — 착지 순간의
+                # 큰 yaw 오차 · 스윙 각속도가 지평 전체 참조로 들어가지 않게.
+                lim = float(cfg_get(self.cfg, "mpc.friction_coefficient", 1.0)) * float(cfg_get(self.cfg, "mpc.foot_half_length")) \
+                    * float(state.reduced.mass) * 9.81
+                out[leg] = float(np.clip(-self._alpha(leg) * m, -lim, lim))
+        return out
 
     def _mark_liftoff_yaw(self, rt, state, leg, t, T):
         """변형 yawtraj: 스윙 시작 순간의 발 yaw · 시각 · 궤적 길이 (스윙 시간 × 비율) 를 기억."""

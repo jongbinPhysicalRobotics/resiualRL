@@ -406,6 +406,7 @@ class ConvexMPC:
         self.force_ref_w = float(_cfg(cfg, "mpc.force_ref_weight", 0.0) or 0.0)   # 변형 fref (기본 0)
         # 변형 wdu (Q&A 9/30 Q12, 기본 0): 입력 변화 비용 가중치 w — 힘 w, 모멘트 w/l² (두 점 힘으로 쟀을 때 같은 크기, l = 발 반길이)
         self.du_w = float(_cfg(cfg, "mpc.input_rate_weight", 0.0) or 0.0)
+        self.hold_w = float(_cfg(cfg, "mpc.hold_in_mpc_weight", 0.0) or 0.0)   # 변형 hmpc (Q&A 9/30 Q14, 기본 0)
         _l = float(_cfg(cfg, "mpc.foot_half_length"))
         self._du_s = np.array([self.du_w] * 3 + [self.du_w / _l ** 2] * 3)
         self._DU_COLS = (np.array([0, 1, 2, 6, 7, 8]), np.array([3, 4, 5, 9, 10, 11]))   # 다리별 [F(3), M(3)] 열
@@ -525,7 +526,7 @@ class ConvexMPC:
         return blk, l, u, sig, stance
 
     # ------------------------------------------------------------------ solve
-    def solve(self, x0, ref: RefOut, steps, foot_yaw, reduced, mode, active=None):
+    def solve(self, x0, ref: RefOut, steps, foot_yaw, reduced, mode, active=None, mz_ref=None):
         t_start = time.perf_counter()
         mode = _mode_str(mode)
         info = dict(status="", status_val=0, iters=0, solve_ms=0.0, build_ms=0.0, total_ms=0.0,
@@ -554,6 +555,19 @@ class ConvexMPC:
                             i = k * NU + iz
                             H[i, i] += 2.0 * self.force_ref_w
                             q[i] -= 2.0 * self.force_ref_w * fz_ref[k]
+            if self.hold_w > 0.0 and mz_ref is not None:  # 변형 hmpc (Q&A 9/30 Q14): 딛는 발 yaw hold 를 MPC 안으로 —
+                st = np.asarray(stance, dtype=bool).reshape(self.N, 2)   # 지금 디딤이 이어지는 스텝의 Mz 를 hold 가 원하는 값 쪽으로
+                H = H.copy(); q = q.copy()                               # w·(Mz_k − Mz_hold)². 제약 · 동역학은 그대로 → 해는 선 접촉 안.
+                for leg, iz in ((0, 8), (1, 11)):
+                    ref_ = float(mz_ref[leg])
+                    if not np.isfinite(ref_):
+                        continue
+                    for k in range(self.N):
+                        if not st[k, leg]:
+                            break
+                        i = k * NU + iz
+                        H[i, i] += 2.0 * self.hold_w
+                        q[i] -= 2.0 * self.hold_w * ref_
             if self.du_w > 0.0:                           # 변형 wdu (Q&A 9/30 Q12): 입력 변화 비용 Σ‖u_k − u_{k−1}‖²_S
                 st = np.asarray(stance, dtype=bool).reshape(self.N, 2)   # 디딤이 이어지는 다리만 (접촉 전환은 벌하지 않음),
                 H = H.copy(); q = q.copy()                               # k = 0 은 지난 풀이에서 적용한 u0 와의 차
