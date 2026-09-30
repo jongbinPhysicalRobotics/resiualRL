@@ -404,6 +404,12 @@ class ConvexMPC:
         self.fz_max = float(_cfg(cfg, "mpc.normal_force_max"))
         self.fz_min = float(_cfg(cfg, "mpc.normal_force_min"))
         self.force_ref_w = float(_cfg(cfg, "mpc.force_ref_weight", 0.0) or 0.0)   # 변형 fref (기본 0)
+        # 변형 wdu (Q&A 9/30 Q12, 기본 0): 입력 변화 비용 가중치 w — 힘 w, 모멘트 w/l² (두 점 힘으로 쟀을 때 같은 크기, l = 발 반길이)
+        self.du_w = float(_cfg(cfg, "mpc.input_rate_weight", 0.0) or 0.0)
+        _l = float(_cfg(cfg, "mpc.foot_half_length"))
+        self._du_s = np.array([self.du_w] * 3 + [self.du_w / _l ** 2] * 3)
+        self._DU_COLS = (np.array([0, 1, 2, 6, 7, 8]), np.array([3, 4, 5, 9, 10, 11]))   # 다리별 [F(3), M(3)] 열
+        self._du_last, self._du_last_st = None, np.zeros(2, dtype=bool)
         for m in ("walking", "standing"):
             if str(_cfg(cfg, f"mpc.{m}.contact_wrench_model", "full_wrench")) != "full_wrench":
                 # no_roll_moment 는 D 행 6/9 에 발 x축이 들어간다 (ConvexMPC.cpp:554-568) — MIT 는 full_wrench.
@@ -548,6 +554,21 @@ class ConvexMPC:
                             i = k * NU + iz
                             H[i, i] += 2.0 * self.force_ref_w
                             q[i] -= 2.0 * self.force_ref_w * fz_ref[k]
+            if self.du_w > 0.0:                           # 변형 wdu (Q&A 9/30 Q12): 입력 변화 비용 Σ‖u_k − u_{k−1}‖²_S
+                st = np.asarray(stance, dtype=bool).reshape(self.N, 2)   # 디딤이 이어지는 다리만 (접촉 전환은 벌하지 않음),
+                H = H.copy(); q = q.copy()                               # k = 0 은 지난 풀이에서 적용한 u0 와의 차
+                for k in range(self.N):
+                    for leg, cols in ((0, self._DU_COLS[0]), (1, self._DU_COLS[1])):
+                        i = k * NU + cols
+                        if k == 0:
+                            if self._du_last is None or not (st[0, leg] and self._du_last_st[leg]):
+                                continue
+                            H[i, i] += 2.0 * self._du_s
+                            q[i] -= 2.0 * self._du_s * self._du_last[cols]
+                        elif st[k, leg] and st[k - 1, leg]:
+                            j = i - NU
+                            H[i, i] += 2.0 * self._du_s; H[j, j] += 2.0 * self._du_s
+                            H[i, j] -= 2.0 * self._du_s; H[j, i] -= 2.0 * self._du_s
             info["build_ms"] = (time.perf_counter() - t_start) * 1e3
             t_solve = time.perf_counter()
             if self.solver_name == "osqp":
@@ -563,6 +584,7 @@ class ConvexMPC:
             info["obj"] = float(0.5 * U @ H @ U + q @ U)
             u0 = U[:NU].copy()
             info["U"] = U.reshape(self.N, NU)
+            self._du_last, self._du_last_st = u0.copy(), np.asarray(stance0, dtype=bool).copy()
         except Exception as exc:              # MC:1016-1052 catch (std::exception) → fallback
             if t_solve is not None:
                 info["solve_ms"] = (time.perf_counter() - t_solve) * 1e3

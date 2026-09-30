@@ -131,6 +131,13 @@ def walking_stance_torque(dyn, state, leg: int, u0, alpha: float, touchdown_yaw:
     if bool(_cfg(cfg, "swing.enable_stance_foot_yaw_hold", False)) and alpha > 0.0 and (two_pt or not two_pt_only):
         M = M.copy()
         M[2] += alpha * stance_yaw_hold_moment_z(state, leg, dyn, touchdown_yaw, cfg, yaw_hold_gains)
+    kd_p = float(_cfg(cfg, "swing.stance_foot_pitch_damping", 0.0) or 0.0)   # 변형 fpd (Q&A 9/30 Q12, 기본 0)
+    if kd_p > 0.0 and alpha > 0.0:
+        # 딛는 발이 발끝 ↔ 뒤꿈치로 흔들리는 것 (발 y 축 둘레 절대 각속도) 을 감쇠. yaw hold 처럼 MPC 밖에서 모멘트를 더한다.
+        # M 은 발이 지면을 미는 모멘트 (τ = Jᵀ[F; M] — 가상일). 관절이 발에 −kd·ω_y 를 주면 발이 지면을 미는 모멘트도 −kd·ω_y.
+        y_f = np.asarray(state.foot_R_W[leg], dtype=float)[:, 1]
+        w_f = np.asarray(state.torso_angvel_W, dtype=float) + np.asarray(dyn.Jw) @ np.asarray(state.qd_leg[leg], dtype=float)
+        M = M - alpha * kd_p * float(y_f.dot(w_f)) * y_f
     if line_proj is not None and alpha > 0.0:
         Fg, Mg, _ = project_line_wrench(-F, -M, line_proj[2], line_proj[0], line_proj[1], int(line_proj[3]))
         F, M = -Fg, -Mg

@@ -99,6 +99,9 @@ def line_foot_template(cfg) -> np.ndarray:
     mu = float(_cfg(cfg, "mpc.friction_coefficient"))
     a = float(_cfg(cfg, "mpc.foot_half_length"))
     lt = lh = a
+    # 변형 cmar=ε (Q&A 9/30 Q12, 기본 0): 두 점이 각각 Fz 의 ε 이상을 받치게 (평발 유지) → CoP 행만 (1 − 2ε)·l.
+    # fz_뒤 = (my + l·Fz)/2l ≥ ε·Fz ⟺ −my ≤ (1 − 2ε)·l·Fz. 비틀림 행의 지렛대 l 은 그대로 (실제 두 접촉점).
+    c = 1.0 - 2.0 * float(_cfg(cfg, "mpc.cop_margin_frac", 0.0) or 0.0)
     return np.array([
         [1.0, 0.0, -mu, 0.0, 0.0, 0.0],             # 0   Fx − µFz ≤ 0
         [-1.0, 0.0, -mu, 0.0, 0.0, 0.0],            # 1  −Fx − µFz ≤ 0
@@ -106,8 +109,8 @@ def line_foot_template(cfg) -> np.ndarray:
         [0.0, -1.0, -mu, 0.0, 0.0, 0.0],            # 3  −Fy − µFz ≤ 0
         [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],             # 4   Fz ≤ Fmax
         [0.0, 0.0, -1.0, 0.0, 0.0, 0.0],            # 5  −Fz ≤ −minScale·Fmin
-        [0.0, 0.0, -lh, 0.0, 1.0, 0.0],             # 6   my ≤ lh·Fz     (CoP 뒤꿈치 쪽)
-        [0.0, 0.0, -lt, 0.0, -1.0, 0.0],            # 7  −my ≤ lt·Fz    (CoP 발끝 쪽)
+        [0.0, 0.0, -c * lh, 0.0, 1.0, 0.0],         # 6   my ≤ c·lh·Fz   (CoP 뒤꿈치 쪽, c = 1 − 2ε)
+        [0.0, 0.0, -c * lt, 0.0, -1.0, 0.0],        # 7  −my ≤ c·lt·Fz  (CoP 발끝 쪽)
         [0.0, lh, -mu * lh, 0.0, mu, 1.0],          # 8   mz + lh·Fy ≤ µ(lh·Fz − my)   (발끝 점 y 마찰)
         [0.0, -lh, -mu * lh, 0.0, mu, -1.0],        # 9  −(mz + lh·Fy) ≤ µ(lh·Fz − my)
         [0.0, lt, -mu * lt, 0.0, -mu, -1.0],        # 10  lt·Fy − mz ≤ µ(lt·Fz + my)   (뒤꿈치 점 y 마찰)
