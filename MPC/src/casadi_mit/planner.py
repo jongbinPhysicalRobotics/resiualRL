@@ -82,11 +82,17 @@ def planar_speed(x_dot: float, y_dot: float) -> float:
 # ---------------------------------------------------------------------------
 # half-stance offset / preview time / swing foot yaw
 # ---------------------------------------------------------------------------
+K_SCHED_X = None   # 변형 ksx (Q&A 10/1 Q20): 명령에 따라 바꾼 전진 k_half — 컨트롤러가 매 틱 설정. None = cfg 값
+K_SCHED_Y = None   # 변형 ksy: 옆 성분 k_half (swing.lateral_half_stance_offset 대신)
+
+
 def selected_half_stance_offset(speed: float, cfg) -> float:
     """strict '>' 비교: s > 0.65 → 0.26, s > 0.60 → 0.28, else 0.37 (s == 0.60 → 0.37).
 
     ref: SwingFootPlanner.cpp:158-169, My_Controller.cpp:35-45. 기본값 ControllerConfig.h:66-72 (0, inf).
     """
+    if K_SCHED_X is not None:
+        return float(K_SCHED_X)
     hi_sw = float(cfg_get(cfg, "swing.high_speed_body_velocity_half_stance_offset_switch_speed", math.inf))
     mid_sw = float(cfg_get(cfg, "swing.body_velocity_half_stance_offset_switch_speed", math.inf))
     if speed > hi_sw:
@@ -424,9 +430,12 @@ class SwingFootPlanner:
         t_rem = gait.remaining_swing_time(leg, t, clock)
         yaw_td = yaw0 + psi_dot * t_rem
         ky = cfg_get(self.cfg, "swing.lateral_half_stance_offset", None)   # 변형 khalfy (Q&A 9/28 Q12)
-        if ky is None:
+        if K_SCHED_Y is not None:                  # 변형 ksy (Q&A 10/1 Q20): khalfy 와 달리 vdir · vmeas 로 섞은 v_B 를 쓴다
+            Tp_y = max(0.0, (0.5 + float(K_SCHED_Y)) * timing_params(self.cfg)[2] - elapsed)
+            step_W = _rz_mul(yaw_trans, (v_B[0] * Tp, v_B[1] * Tp_y, 0.0))
+        elif ky is None:
             step_W = _rz_mul(yaw_trans, v_B) * Tp
-        else:                                  # 옆 성분만 T_p,y = (0.5 + k_y)·T_st
+        else:                                  # 옆 성분만 T_p,y = (0.5 + k_y)·T_st  (⚠ 명령 px · py 를 그대로 — vdir 섞기가 빠진다, Q&A 10/1 Q20)
             Tp_y = max(0.0, (0.5 + float(ky)) * timing_params(self.cfg)[2] - elapsed)
             step_W = _rz_mul(yaw_trans, (px * Tp, py * Tp_y, 0.0))
         center = self._stop_stance_center_world(state, x0) if stop_recenter \

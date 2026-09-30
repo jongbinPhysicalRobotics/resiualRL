@@ -157,6 +157,8 @@ class MitController:
         self.planner = SwingFootPlanner(cfg, raibert_gain=self.raibert_gain, ypos_gain=self.ypos_gain)
         import planner as _planner_mod                             # 변형 psioff (Q&A 9/29 Q6)
         _planner_mod.PSI_OFFSET_SCALE = float(cfg_get(cfg, "swing.psi_offset_scale", 1.0))
+        _planner_mod.K_SCHED_X = None                              # 변형 ksx · ksy (Q&A 10/1 Q20) — 매 틱 _k_schedule 이 설정
+        _planner_mod.K_SCHED_Y = None
         self.mpc = CasadiCondensedMPC(cfg, solver=self.solver_name, osqp_settings=self.osqp_settings or None,
                                       verbose_errors=self.verbose, foot_model=self.foot_model)
         tr = cfg.locomotion_transition
@@ -369,6 +371,25 @@ class MitController:
         self.last_info = info
         return info
 
+    def _k_schedule(self):
+        """변형 ksx · ksy (Q&A 10/1 Q20): 착지 미리보기 k_half 를 명령에 따라 — 곧게 빨리 걸을 땐 전진 k 를 k_빠름 쪽으로,
+        옆으로 걸을 땐 옆 k 를 k_옆 쪽으로. 회전 명령이 있으면 (|ψ̇| ≥ w) 둘 다 기본 k0 (걸으며 돌기가 k 에 민감 — 9/30 Q19).
+        k = k0 + (k_목표 − k0)·s,  s_x = min(1, |v_x|/0.8)·(1 − t),  s_y = min(1, |v_y|/0.5)·(1 − t),  t = min(1, |ψ̇|/w)."""
+        cfg = self.cfg
+        kx_f = cfg_get(cfg, "swing.k_sched_fast_x", None)
+        ky_l = cfg_get(cfg, "swing.k_sched_lat_y", None)
+        if kx_f is None and ky_l is None:
+            return
+        import planner as _pm
+        f = self.filtered
+        k0 = float(cfg_get(cfg, "swing.body_velocity_half_stance_offset", 0.37))
+        w = float(cfg_get(cfg, "swing.k_sched_turn_rate", 0.5) or 0.5)
+        turn = min(1.0, abs(float(f.psi_dot)) / w)
+        if kx_f is not None:
+            _pm.K_SCHED_X = k0 + (float(kx_f) - k0) * min(1.0, abs(float(f.x_dot)) / 0.8) * (1.0 - turn)
+        if ky_l is not None:
+            _pm.K_SCHED_Y = k0 + (float(ky_l) - k0) * min(1.0, abs(float(f.y_dot)) / 0.5) * (1.0 - turn)
+
     def _yaw_hold_gains(self):
         """변형 shw (Q&A 9/30 Q10): 회전 명령 |ψ̇| 에 따라 hold 이득을 reference (20 / 4) 쪽으로. 꺼져 있으면 None (yaml 이득)."""
         cfg = self.cfg
@@ -577,6 +598,7 @@ class MitController:
                 import mujoco as _mj
                 _mj.mj_subtreeVel(model.m, model.d)
                 self.planner.v_wb = np.array(model.d.subtree_linvel[0], dtype=float, copy=True)
+            self._k_schedule()                                     # 변형 ksx · ksy (Q&A 10/1 Q20)
             nominal = self.planner.desired_foot_positions(state, x0, self.clock, self.gait, self.filtered, t)
         self.cm.update(state, self.gait, self.mode, nominal, t)   # 9
         desired = self.cm.managed_foot_positions(nominal)          # 10
