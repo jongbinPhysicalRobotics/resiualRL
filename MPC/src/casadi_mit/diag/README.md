@@ -14,6 +14,7 @@
 | `tab.py` | 11_gait_quality JSON → 한 줄 요약 표 | `tab.py out.json "<공통 접두어>"` | — |
 | `push_tab.py` | 외란 격자 JSON → 방향 × 크기 표 (위상 여러 개면 성공 수) | `push_tab.py push.json` | 9/29 Q11 |
 | `gait_tab.py` | 보행 주기 격자 JSON → 주기 · 스윙 · k_half 별 표 | `gait_tab.py gait.json` | 9/30 Q3 |
+| `line_diag.py` + `line_ana.py` | 디딤 발 MPC 명령 wrench 와 실제 MuJoCo 접촉 wrench 를 발 좌표로 기록 → CoP 끝 비율 · 옆 힘 · 두 점 (선 접촉) 비틀림 제약 넘침 요약 | `line_diag.py 1.0 0 0 15 <var> out.npz` → `line_ana.py out.npz --l 0.075` | 9/30 Q11 |
 | `lat_tab.py` | 옆 외란 선별 JSON → 변형 × 방향 성공 수 (접두어 P 는 파일 안에서 고쳐 쓴다) | `lat_tab.py lat.json lat_n.json` | 9/29 Q12 |
 
 저장소 안에 원래 있던 진단 도구: `11_gait_quality.py` (병렬 A/B 러너 · 걸음 품질 표),

@@ -77,10 +77,48 @@ def stance_yaw_hold_moment_z(state, leg: int, dyn, touchdown_yaw: float, cfg, ga
     return float(kp * err - kd * rate)
 
 
+def project_line_wrench(F_g, M_g, yaw: float, C, l: float, mode: int = 1):
+    """변형 lproj (Q&A 9/30 Q11): 지면 → 발 wrench (월드) 를 선 접촉 가능 집합에 투영.
+    발 yaw 좌표에서 line 제약 C·w ≤ 0 (행 0~3 마찰, 5 Fz ≥ 0, 6~11 CoP · 두 점 y 마찰 — 행 4 Fz 상한은 뺌) 과 Mx = 0 을
+    만족하는 가장 가까운 w. 거리 가중치 힘 1 · 모멘트 1/l² (두 점 힘으로 쟀을 때 같은 크기 — 유도). 이미 만족하면 그대로.
+    반환 (F_g', M_g', 투영 거리 [N 환산]).
+    mode 2 (lproj=2): 투영 대신 차례로 자르기 — Fz ≥ 0, |Fx|·|Fy| ≤ µFz, |My| ≤ l·Fz, Mx = 0, 마지막으로 Mz 를
+    두 점 y 마찰 (행 8~11) 이 허용하는 구간으로. 힘은 마찰을 넘을 때만 바뀌고 넘치는 비틀림은 Mz 에서만 깎는다."""
+    c, s = np.cos(yaw), np.sin(yaw)
+    Rt = np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]])
+    w = np.concatenate([Rt @ np.asarray(F_g, dtype=float), Rt @ np.asarray(M_g, dtype=float)])
+    if mode == 2:
+        mu = -float(np.asarray(C)[0, 2])                     # 행 0: Fx − µFz ≤ 0
+        x = w.copy()
+        x[2] = max(x[2], 0.0)
+        x[0] = np.clip(x[0], -mu * x[2], mu * x[2])
+        x[1] = np.clip(x[1], -mu * x[2], mu * x[2])
+        x[3] = 0.0
+        x[4] = np.clip(x[4], -l * x[2], l * x[2])
+        lo = max(-mu * (l * x[2] - x[4]) - l * x[1], l * x[1] - mu * (l * x[2] + x[4]))
+        hi = min(mu * (l * x[2] - x[4]) - l * x[1], l * x[1] + mu * (l * x[2] + x[4]))
+        x[5] = np.clip(x[5], lo, hi)
+        d = np.array([1.0, 1.0, 1.0, 1.0 / l ** 2, 1.0 / l ** 2, 1.0 / l ** 2])
+        return Rt.T @ x[:3], Rt.T @ x[3:], float(np.sqrt(np.sum(d * (x - w) ** 2)))
+    rows = [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11]
+    Cr = np.asarray(C, dtype=float)[rows]
+    if np.all(Cr @ w <= 1e-9 * max(1.0, abs(w[2]))) and abs(w[3]) <= 1e-9:
+        return np.asarray(F_g, dtype=float), np.asarray(M_g, dtype=float), 0.0
+    import quadprog
+    d = np.array([1.0, 1.0, 1.0, 1.0 / l ** 2, 1.0 / l ** 2, 1.0 / l ** 2])
+    G = np.diag(d)
+    Aq = np.vstack([np.eye(6)[3:4], -Cr]).T               # quadprog: Aqᵀ x ≥ b, 첫 열 등식 (Mx = 0)
+    b = np.zeros(1 + len(rows))
+    x = quadprog.solve_qp(G, d * w, Aq, b, meq=1)[0]
+    dist = float(np.sqrt(np.sum(d * (x - w) ** 2)))
+    return Rt.T @ x[:3], Rt.T @ x[3:], dist
+
+
 def walking_stance_torque(dyn, state, leg: int, u0, alpha: float, touchdown_yaw: float, cfg,
-                          yaw_hold_gains=None) -> np.ndarray:
+                          yaw_hold_gains=None, line_proj=None) -> np.ndarray:
     """writeLegCommands stance 가지 (My_Controller.cpp:1315-1350) + stance_torque.
-    F = −α u0[F_leg], M = −α u0[M_leg]; enable_stance_foot_yaw_hold 이고 α > 0 이면 M.z += α·m_z."""
+    F = −α u0[F_leg], M = −α u0[M_leg]; enable_stance_foot_yaw_hold 이고 α > 0 이면 M.z += α·m_z.
+    line_proj = (C, l, 발 yaw, mode) 이면 (변형 lproj) yaw hold 를 더한 최종 wrench 를 선 접촉 가능 집합에 투영한 뒤 토크로."""
     u0 = np.asarray(u0, dtype=float)
     if leg == LEFT:
         F = -alpha * u0[0:3]
@@ -93,6 +131,9 @@ def walking_stance_torque(dyn, state, leg: int, u0, alpha: float, touchdown_yaw:
     if bool(_cfg(cfg, "swing.enable_stance_foot_yaw_hold", False)) and alpha > 0.0 and (two_pt or not two_pt_only):
         M = M.copy()
         M[2] += alpha * stance_yaw_hold_moment_z(state, leg, dyn, touchdown_yaw, cfg, yaw_hold_gains)
+    if line_proj is not None and alpha > 0.0:
+        Fg, Mg, _ = project_line_wrench(-F, -M, line_proj[2], line_proj[0], line_proj[1], int(line_proj[3]))
+        F, M = -Fg, -Mg
     tau = stance_torque(dyn, F, M)
     if bool(_cfg(cfg, "swing.walk_stance_bias", False)):   # 변형 walkbias (Q&A 9/29 Q7): 입각 다리 자중 · 코리올리 보상
         tau = tau + np.asarray(dyn.bias, dtype=float)

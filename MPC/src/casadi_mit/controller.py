@@ -50,7 +50,7 @@ from gait import GaitScheduler, HorizonClock, cfg_get
 from leg_control import (arm_pd, limit_swing_torque, standing_torque, stance_yaw_hold_moment_z, swing_torque,
                          walking_stance_torque)
 from mit_model import LEFT, RIGHT, Rz
-from mpc import build_reference, mpc_foot_yaw
+from mpc import build_reference, mpc_foot_yaw, resolved_foot_yaw
 from mpc_casadi import CasadiCondensedMPC
 from planner import (BodyTarget, SwingFootPlanner, SwingFootTrajectory, half_stance_preview_time, planar_speed,
                      standing_foot_targets,
@@ -454,8 +454,13 @@ class MitController:
                     kp_s = float(cfg_get(cfg, "swing.stance_yaw_kp", 20.0))
                     kd_s = float(cfg_get(cfg, "swing.stance_yaw_kd", 4.0))
                     gains = (20.0 + f_ * (kp_s - 20.0), 4.0 + f_ * (kd_s - 4.0))
+                lp = None
+                lp_mode = int(float(cfg_get(cfg, "mpc.line_wrench_projection", 0) or 0))   # 1 투영 · 2 자르기
+                if self.foot_model == "line" and lp_mode:
+                    fy_ = np.asarray((self.last_info or {}).get("foot_yaw", [np.nan, np.nan]), dtype=float).reshape(-1, 2)[0]
+                    lp = (self.mpc.template, float(cfg_get(cfg, "mpc.foot_half_length")), resolved_foot_yaw(fy_[leg]), lp_mode)
                 tau[leg] = walking_stance_torque(dyn, state, leg, self.u_hold, self._alpha(leg), rt.touchdown_yaw, cfg,
-                                                 yaw_hold_gains=gains)
+                                                 yaw_hold_gains=gains, line_proj=lp)   # 변형 lproj (Q&A 9/30 Q11)
             else:
                 yaw_des, yaw_rate_des = self._swing_yaw_ref(rt, t)
                 ff_mode = int(cfg_get(cfg, "swing.yaw_trajectory_ff", 1))
