@@ -32,6 +32,7 @@ claude.ai 본 채팅에 그대로 붙여넣어 공부할 수 있도록 각 항�
 | [PHYSICS_MAP.md](../MPC/PHYSICS_MAP.md) | 물리 근사의 현재 상태 지도 (스냅샷) |
 | [REFERENCE_ANALYSIS.md](../REFERENCE_ANALYSIS.md) | reference 코드 분석 |
 | [CODE_MAP.md](../MPC/CODE_MAP.md) | 코드 읽는 순서 안내 (파일 18개 중 핵심 5개) |
+| [DEBUG_JOURNAL.md](../MPC/DEBUG_JOURNAL.md) | 9/26 ~ 9/30 디버깅 기록 — 사례 14 개 (증상 → 가설 → 확인 → 원인 → 해결 → 교훈) + 재사용할 방법 · 함정 · 도구 |
 | [ARM_SWING_PLAN.md](../MPC/ARM_SWING_PLAN.md) | 팔 흔들기 — CAM 논문 분석 + 우리 팔 권한 실측 |
 | [RESIDUAL_NOTES.md](../MPC%20+%20RL/RESIDUAL_NOTES.md) | Residual MPC 논문 이식 노트 (residual 착수 시) |
 | [VERIFY_REPORT.md](../MPC/VERIFY_REPORT.md) | 적대적 검증 리포트 원문 |
