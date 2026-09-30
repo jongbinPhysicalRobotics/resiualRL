@@ -531,6 +531,7 @@ class ConvexMPC:
     def solve(self, x0, ref: RefOut, steps, foot_yaw, reduced, mode, active=None, mz_ref=None):
         t_start = time.perf_counter()
         mode = _mode_str(mode)
+        self._mode_now = mode                                   # 변형 cmarw (Q&A 10/1 Q21): 제약 템플릿을 모드별로
         info = dict(status="", status_val=0, iters=0, solve_ms=0.0, build_ms=0.0, total_ms=0.0,
                     cold=False, retry=False, fallback=False, sig_changed=False, U=None, obj=np.nan, error=None)
         x0 = np.asarray(x0, dtype=float)

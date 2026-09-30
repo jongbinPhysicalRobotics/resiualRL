@@ -94,14 +94,16 @@ def build_rot_function(template: np.ndarray) -> ca.Function:
     return ca.Function("rot", [yaw], [ca.densify(CW)])
 
 
-def line_foot_template(cfg) -> np.ndarray:
-    """OA-MPC 선 접촉 12×6 (발 좌표계 [Fx,Fy,Fz,Mx,My,Mz], C·w ≤ ub).  lt = lh = foot_half_length."""
+def line_foot_template(cfg, margin=None) -> np.ndarray:
+    """OA-MPC 선 접촉 12×6 (발 좌표계 [Fx,Fy,Fz,Mx,My,Mz], C·w ≤ ub).  lt = lh = foot_half_length.
+    margin: 두 점 최소 하중 비율 ε 를 직접 줄 때 (변형 cmarw — 걷기 전용 템플릿)."""
     mu = float(_cfg(cfg, "mpc.friction_coefficient"))
     a = float(_cfg(cfg, "mpc.foot_half_length"))
     lt = lh = a
     # 변형 cmar=ε (Q&A 9/30 Q12, 기본 0): 두 점이 각각 Fz 의 ε 이상을 받치게 (평발 유지) → CoP 행만 (1 − 2ε)·l.
     # fz_뒤 = (my + l·Fz)/2l ≥ ε·Fz ⟺ −my ≤ (1 − 2ε)·l·Fz. 비틀림 행의 지렛대 l 은 그대로 (실제 두 접촉점).
-    c = 1.0 - 2.0 * float(_cfg(cfg, "mpc.cop_margin_frac", 0.0) or 0.0)
+    eps = float(_cfg(cfg, "mpc.cop_margin_frac", 0.0) or 0.0) if margin is None else float(margin)
+    c = 1.0 - 2.0 * eps
     return np.array([
         [1.0, 0.0, -mu, 0.0, 0.0, 0.0],             # 0   Fx − µFz ≤ 0
         [-1.0, 0.0, -mu, 0.0, 0.0, 0.0],            # 1  −Fx − µFz ≤ 0
@@ -183,6 +185,12 @@ class CasadiCondensedMPC(ConvexMPC):
                                  N_INEQ + (A_rows - ineq_rows - N_EQ * k_of_col))
             self._A_gather = (k_of_col * (N_INEQ + N_EQ) + local_row) * NU + local_col
         self._rot_fn = build_rot_function(self.template)
+        # 변형 cmarw (Q&A 10/1 Q21): 걷기에서만 다른 두 점 최소 하중 (서기는 cmar 그대로 — 서기 외란은 CoP 범위가 필요)
+        self.template_walk, self._rot_fn_walk = self.template, self._rot_fn
+        m_w = _cfg(cfg, "mpc.cop_margin_frac_walk", None)
+        if foot_model == "line" and m_w is not None:
+            self.template_walk = line_foot_template(cfg, margin=float(m_w))
+            self._rot_fn_walk = build_rot_function(self.template_walk)
 
     # ------------------------------------------------------------------ 공식 (기호식)
     def formulate(self, ref, reduced):
@@ -215,9 +223,10 @@ class CasadiCondensedMPC(ConvexMPC):
 
     def _rot_steps(self, yaws):
         """스텝별 yaw (N,) → (N,12,6) 회전된 제약 블록. 모두 같으면 한 번만 계산 (reference 경로와 같은 값)."""
+        fn = self._rot_fn_walk if getattr(self, "_mode_now", None) == "walking" else self._rot_fn
         if np.all(yaws == yaws[0]):
-            return np.array(self._rot_fn(yaws[0]))[None].repeat(len(yaws), 0)
-        return np.stack([np.array(self._rot_fn(v)) for v in yaws])
+            return np.array(fn(yaws[0]))[None].repeat(len(yaws), 0)
+        return np.stack([np.array(fn(v)) for v in yaws])
 
     def build_constraints(self, steps, foot_yaw):
         n = self.N

@@ -520,7 +520,8 @@ class MitController:
                 lp_mode = int(float(cfg_get(cfg, "mpc.line_wrench_projection", 0) or 0))   # 1 투영 · 2 자르기
                 if self.foot_model == "line" and lp_mode:
                     fy_ = np.asarray((self.last_info or {}).get("foot_yaw", [np.nan, np.nan]), dtype=float).reshape(-1, 2)[0]
-                    lp = (self.mpc.template, float(cfg_get(cfg, "mpc.foot_half_length")), resolved_foot_yaw(fy_[leg]), lp_mode)
+                    lp = (getattr(self.mpc, "template_walk", self.mpc.template), float(cfg_get(cfg, "mpc.foot_half_length")),
+                          resolved_foot_yaw(fy_[leg]), lp_mode)
                 u_use = self.u_hold
                 if float(cfg_get(cfg, "mpc.input_interpolation", 0) or 0) and getattr(self, "_u_next", None) is not None:
                     # 변형 uint (Q&A 9/30 Q13): 풀이 사이 (10 ms) 에 u0 → u1 (다음 MPC 스텝) 로 선형 보간 — 계단 명령을 없앤다.
