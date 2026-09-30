@@ -74,7 +74,9 @@ def stance_yaw_hold_moment_z(state, leg: int, dyn, touchdown_yaw: float, cfg, ga
     d = np.array([np.cos(touchdown_yaw), np.sin(touchdown_yaw), 0.0])
     err = np.arctan2(_EZ.dot(np.cross(proj, d)), proj.dot(d))
     rate = _EZ.dot(Jw @ qd)
-    return float(kp * err - kd * rate)
+    if int(_cfg(cfg, "swing.stance_yaw_rate_absolute", 0) or 0):   # 변형 shabs (Q&A 9/30 Q13): 발의 절대 yaw 각속도로 감쇠.
+        rate += float(np.asarray(state.torso_angvel_W, dtype=float)[2])   # reference 는 몸통 기준 상대 속도 → 제자리 회전 중엔
+    return float(kp * err - kd * rate)                                    # 가만히 있는 발도 −ψ̇ 로 보여 발을 몸통 따라 돌리려 한다
 
 
 def project_line_wrench(F_g, M_g, yaw: float, C, l: float, mode: int = 1):
@@ -94,7 +96,8 @@ def project_line_wrench(F_g, M_g, yaw: float, C, l: float, mode: int = 1):
         x[0] = np.clip(x[0], -mu * x[2], mu * x[2])
         x[1] = np.clip(x[1], -mu * x[2], mu * x[2])
         x[3] = 0.0
-        x[4] = np.clip(x[4], -l * x[2], l * x[2])
+        lc = -float(np.asarray(C)[6, 2])                     # CoP 행의 계수 (cmar 가 있으면 (1 − 2ε)·l)
+        x[4] = np.clip(x[4], -lc * x[2], lc * x[2])
         lo = max(-mu * (l * x[2] - x[4]) - l * x[1], l * x[1] - mu * (l * x[2] + x[4]))
         hi = min(mu * (l * x[2] - x[4]) - l * x[1], l * x[1] + mu * (l * x[2] + x[4]))
         x[5] = np.clip(x[5], lo, hi)
@@ -114,6 +117,36 @@ def project_line_wrench(F_g, M_g, yaw: float, C, l: float, mode: int = 1):
     return Rt.T @ x[:3], Rt.T @ x[3:], dist
 
 
+def stance_foot_damping(dyn, state, leg: int, kd: float, mode: int = 1) -> np.ndarray:
+    """변형 sjd (Q&A 9/30 Q13): 딛는 발이 제자리에 있도록 하는 관절 감쇠 — 논문 식 (21) 의 K_d(q̇_MPC − q̇) 항을
+    SRB 틀에서 옮긴 것. 논문 MPC 의 접촉 조건 J·q̇·φ = 0 (디딤 발은 움직이지 않는다) 을 만족하는 관절 속도를 목표로 삼는다:
+      q̇_des = q̇ − J5⁻¹·V5,  τ = kd·(q̇_des − q̇) = −kd·J5⁻¹·V5
+    V5 = [발 site 절대 선속도 (3), 발 y · z 축 둘레 절대 각속도 (2)]. 발 x 축 (roll) 은 뺀다 — 선 접촉은 그 축으로
+    구를 수 있고 (Mx = 0), 막으려면 접촉이 낼 수 없는 roll 모멘트가 필요하다. 발이 가만히 있으면 0 → MPC wrench 를 건드리지 않는다.
+    mode 2 (sjdm=2): 미끄럼 성분만 — 수평 선속도 2 + yaw 각속도 1 에만 감쇠 (수직 · pitch 는 목표 = 현재, 즉 감쇠 0).
+    걷기의 발끝 차기 (발 pitch 회전) 와 착지 내려앉기를 막지 않으려는 것."""
+    R = np.asarray(state.foot_R_W[leg], dtype=float)
+    ey, ez = R[:, 1], R[:, 2]
+    Jv, Jw = np.asarray(dyn.Jv), np.asarray(dyn.Jw)
+    qd = np.asarray(state.qd_leg[leg], dtype=float)
+    w_f = np.asarray(state.torso_angvel_W, dtype=float) + Jw @ qd
+    J5 = np.vstack([Jv, ey @ Jw, ez @ Jw])
+    V5 = np.concatenate([np.asarray(state.foot_vel_W[leg], dtype=float), [ey.dot(w_f), ez.dot(w_f)]])
+    if mode >= 2:
+        V5 = V5.copy(); V5[2] = 0.0; V5[3] = 0.0                     # 수직 · pitch 는 그대로 둔다
+    if mode == 5:                                                   # 수평 미끄럼만 (yaw 는 yaw hold 에 맡긴다), 감쇠 최소제곱
+        V5[4] = 0.0
+        dq = J5.T @ np.linalg.solve(J5 @ J5.T + 0.05 ** 2 * np.eye(5), V5)
+        return -kd * dq
+    if mode == 3:                                                   # 감쇠 최소제곱 (λ = 0.05) — 무릎이 펴져 J5 가 특이점 근처일 때 과대 토크 방지
+        dq = J5.T @ np.linalg.solve(J5 @ J5.T + 0.05 ** 2 * np.eye(5), V5)
+        return -kd * dq
+    if mode == 4:                                                   # Jᵀ 방식: 발에 감쇠 wrench −kd·V (N·s/m, yaw 는 N·m·s/rad) 를 관절로
+        return -kd * (J5.T @ V5)
+    dq = np.linalg.lstsq(J5, V5, rcond=1e-3)[0]
+    return -kd * dq
+
+
 def walking_stance_torque(dyn, state, leg: int, u0, alpha: float, touchdown_yaw: float, cfg,
                           yaw_hold_gains=None, line_proj=None) -> np.ndarray:
     """writeLegCommands stance 가지 (My_Controller.cpp:1315-1350) + stance_torque.
@@ -126,6 +159,10 @@ def walking_stance_torque(dyn, state, leg: int, u0, alpha: float, touchdown_yaw:
     else:
         F = -alpha * u0[3:6]
         M = -alpha * u0[9:12]
+    if line_proj is not None and alpha > 0.0 and int(line_proj[3]) == 3:
+        # lproj=3 (Q&A 9/30 Q13): MPC 해 u0 만 선 접촉 집합으로 자른다 (ADMM 고정 반복의 잔여 위반 보정 — OSQP polishing 과 같은 역할).
+        Fg, Mg, _ = project_line_wrench(-F, -M, line_proj[2], line_proj[0], line_proj[1], 2)
+        F, M = -Fg, -Mg
     two_pt_only = int(_cfg(cfg, "swing.stance_yaw_hold_mode", 1) or 1) == 2      # 변형 yawhold=2 (Q&A 9/29 Q5)
     two_pt = int(np.asarray(getattr(state, "foot_contact_count", np.full(2, 2)))[leg]) >= 2
     if bool(_cfg(cfg, "swing.enable_stance_foot_yaw_hold", False)) and alpha > 0.0 and (two_pt or not two_pt_only):
@@ -138,7 +175,7 @@ def walking_stance_torque(dyn, state, leg: int, u0, alpha: float, touchdown_yaw:
         y_f = np.asarray(state.foot_R_W[leg], dtype=float)[:, 1]
         w_f = np.asarray(state.torso_angvel_W, dtype=float) + np.asarray(dyn.Jw) @ np.asarray(state.qd_leg[leg], dtype=float)
         M = M - alpha * kd_p * float(y_f.dot(w_f)) * y_f
-    if line_proj is not None and alpha > 0.0:
+    if line_proj is not None and alpha > 0.0 and int(line_proj[3]) in (1, 2):
         Fg, Mg, _ = project_line_wrench(-F, -M, line_proj[2], line_proj[0], line_proj[1], int(line_proj[3]))
         F, M = -Fg, -Mg
     tau = stance_torque(dyn, F, M)

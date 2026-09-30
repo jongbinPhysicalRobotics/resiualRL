@@ -47,7 +47,7 @@ from command import CommandFilter, UserCommand
 from contact_manager import ContactManager
 from fsm import LocomotionFSM, LocomotionState
 from gait import GaitScheduler, HorizonClock, cfg_get
-from leg_control import (arm_pd, limit_swing_torque, standing_torque, stance_yaw_hold_moment_z, swing_torque,
+from leg_control import (arm_pd, limit_swing_torque, standing_torque, stance_yaw_hold_moment_z, swing_torque, stance_foot_damping,
                          walking_stance_torque)
 from mit_model import LEFT, RIGHT, Rz
 from mpc import build_reference, mpc_foot_yaw, resolved_foot_yaw
@@ -348,6 +348,9 @@ class MitController:
             info = dict(status="exception", fallback=True, cold=False, solve_ms=np.nan, total_ms=np.nan,
                         iters=0, error=str(exc), x_ref0=np.full(13, np.nan), stance0=active.copy())
         self.u_hold = np.asarray(u0, dtype=float).copy()
+        U_ = info.get("U") if isinstance(info, dict) else None             # 변형 uint (Q&A 9/30 Q13): 다음 스텝 입력 (보간용)
+        self._u_next = np.asarray(U_[1], dtype=float).copy() if U_ is not None and len(U_) > 1 else self.u_hold.copy()
+        self._t_solve = t
         self.last_mpc_iteration = self.iteration
         info["t"] = t
         info["iteration"] = self.iteration
@@ -459,8 +462,18 @@ class MitController:
                 if self.foot_model == "line" and lp_mode:
                     fy_ = np.asarray((self.last_info or {}).get("foot_yaw", [np.nan, np.nan]), dtype=float).reshape(-1, 2)[0]
                     lp = (self.mpc.template, float(cfg_get(cfg, "mpc.foot_half_length")), resolved_foot_yaw(fy_[leg]), lp_mode)
-                tau[leg] = walking_stance_torque(dyn, state, leg, self.u_hold, self._alpha(leg), rt.touchdown_yaw, cfg,
+                u_use = self.u_hold
+                if float(cfg_get(cfg, "mpc.input_interpolation", 0) or 0) and getattr(self, "_u_next", None) is not None:
+                    # 변형 uint (Q&A 9/30 Q13): 풀이 사이 (10 ms) 에 u0 → u1 (다음 MPC 스텝) 로 선형 보간 — 계단 명령을 없앤다.
+                    # 두 해의 볼록 조합이라 (같은 접촉 · 발 yaw 면) 선 접촉 제약을 그대로 만족한다.
+                    a_ = min(max((t - self._t_solve) / float(self.mpc.dt), 0.0), 1.0)
+                    u_use = self.u_hold + a_ * (self._u_next - self.u_hold)
+                tau[leg] = walking_stance_torque(dyn, state, leg, u_use, self._alpha(leg), rt.touchdown_yaw, cfg,
                                                  yaw_hold_gains=gains, line_proj=lp)   # 변형 lproj (Q&A 9/30 Q11)
+                kd_s = float(cfg_get(cfg, "swing.stance_joint_damping", 0.0) or 0.0)   # 변형 sjd (Q&A 9/30 Q13)
+                if kd_s > 0.0 and bool(np.asarray(state.foot_contact)[leg]):   # 실제로 닿아 있을 때만 (예정 착지 전 공중 발은 제외)
+                    tau[leg] = tau[leg] + self._alpha(leg) * stance_foot_damping(
+                        dyn, state, leg, kd_s, int(float(cfg_get(cfg, "swing.stance_joint_damping_mode", 1) or 1)))
             else:
                 yaw_des, yaw_rate_des = self._swing_yaw_ref(rt, t)
                 ff_mode = int(cfg_get(cfg, "swing.yaw_trajectory_ff", 1))

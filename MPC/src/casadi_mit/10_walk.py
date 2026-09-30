@@ -124,7 +124,7 @@ def parse_variant(s: str | None) -> dict:
             kw["stand_yaw_hold"] = bool(int(v))
         elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
             kw["arm_swing"] = float(v)
-        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
+        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "shabs"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
             path = {"tdz": "swing.touchdown_z", "fref": "mpc.force_ref_weight", "tswing": "timing.swing",
                     "tcycle": "timing.cycle", "hor": "timing.horizon", "kdz": "swing.kd_zeta",
                     "raii": "swing.raibert_int_gain", "psioff": "swing.psi_offset_scale",
@@ -141,7 +141,11 @@ def parse_variant(s: str | None) -> dict:
                     "lproj": "mpc.line_wrench_projection",   # lproj=1 투영 · 2 자르기: 디딤 발 최종 wrench 를 선 접촉 집합으로 (foot=line 만, Q&A 9/30 Q11)
                     "wdu": "mpc.input_rate_weight",          # wdu=w: MPC 입력 변화 비용 (힘 w, 모멘트 w/l², Q&A 9/30 Q12)
                     "cmar": "mpc.cop_margin_frac",           # cmar=ε: line 발 두 점이 각각 Fz 의 ε 이상 (CoP 행만 (1−2ε)l, Q&A 9/30 Q12)
-                    "fpd": "swing.stance_foot_pitch_damping"}[k]   # fpd=kd: 딛는 발 pitch 각속도 감쇠 모멘트 (MPC 밖, Q&A 9/30 Q12)
+                    "fpd": "swing.stance_foot_pitch_damping",   # fpd=kd: 딛는 발 pitch 각속도 감쇠 모멘트 (MPC 밖, Q&A 9/30 Q12)
+                    "sjd": "swing.stance_joint_damping",        # sjd=kd: 딛는 발 고정 관절 감쇠 (논문 식 (21) K_d 항, Q&A 9/30 Q13)
+                    "sjdm": "swing.stance_joint_damping_mode",  # sjdm=2: 감쇠를 수평 미끄럼 · yaw 에만
+                    "uint": "mpc.input_interpolation",          # uint=1: 풀이 사이 u0 → u1 선형 보간 (Q&A 9/30 Q13)
+                    "shabs": "swing.stance_yaw_rate_absolute"}[k]  # shabs=1: 딛는 발 yaw hold 감쇠를 절대 yaw 각속도로 (Q&A 9/30 Q13)
             kw.setdefault("raw_over", {})[path] = float(v)
         elif k == "push":                          # 외란 (Q&A 9/29 Q11, 교수님 지시): Fx:Fy:t0:dur — 진행 방향 기준 [N],
             f_ = [float(x) for x in str(v).split(":")]   # t0 = 측정 창 시작 (걷기 시작 / 서기면 0) 뒤 [s], dur [s]. 몸통 CoM 에 가함
