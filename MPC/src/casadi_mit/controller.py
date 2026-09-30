@@ -353,6 +353,14 @@ class MitController:
         self.u_hold = np.asarray(u0, dtype=float).copy()
         U_ = info.get("U") if isinstance(info, dict) else None             # 변형 uint (Q&A 9/30 Q13): 다음 스텝 입력 (보간용)
         self._u_next = np.asarray(U_[1], dtype=float).copy() if U_ is not None and len(U_) > 1 else self.u_hold.copy()
+        st_tab = info.get("stance_tab") if isinstance(info, dict) else None
+        if int(float(cfg_get(self.cfg, "mpc.input_interpolation_mode", 0) or 0)) == 2:
+            self._u_next[0:6] = self.u_hold[0:6]                   # uintm=2: 힘은 계단 그대로, 모멘트 (CoP · 비틀림) 만 보간
+        if st_tab is not None and len(st_tab) > 1 and int(float(cfg_get(self.cfg, "mpc.input_interpolation_mode", 0) or 0)) == 1:
+            # uintm=1 (Q&A 9/30 Q15): 스텝 0 → 1 사이 디딤이 바뀌는 다리는 보간하지 않는다 (체중 이동을 앞당기지 않게)
+            for leg, cols in ((0, [0, 1, 2, 6, 7, 8]), (1, [3, 4, 5, 9, 10, 11])):
+                if bool(st_tab[0][leg]) != bool(st_tab[1][leg]):
+                    self._u_next[cols] = self.u_hold[cols]
         self._t_solve = t
         self.last_mpc_iteration = self.iteration
         info["t"] = t
@@ -496,7 +504,8 @@ class MitController:
                 if float(cfg_get(cfg, "mpc.input_interpolation", 0) or 0) and getattr(self, "_u_next", None) is not None:
                     # 변형 uint (Q&A 9/30 Q13): 풀이 사이 (10 ms) 에 u0 → u1 (다음 MPC 스텝) 로 선형 보간 — 계단 명령을 없앤다.
                     # 두 해의 볼록 조합이라 (같은 접촉 · 발 yaw 면) 선 접촉 제약을 그대로 만족한다.
-                    a_ = min(max((t - self._t_solve) / float(self.mpc.dt), 0.0), 1.0)
+                    a_ = min(max((t - self._t_solve) / float(self.mpc.dt), 0.0), 1.0) \
+                        * float(cfg_get(cfg, "mpc.input_interpolation", 0) or 0)       # uint=s: 기울기 배율 (1 = u1 까지)
                     u_use = self.u_hold + a_ * (self._u_next - self.u_hold)
                 tau[leg] = walking_stance_torque(dyn, state, leg, u_use, self._alpha(leg), rt.touchdown_yaw, cfg,
                                                  yaw_hold_gains=gains, line_proj=lp)   # 변형 lproj (Q&A 9/30 Q11)

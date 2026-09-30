@@ -124,7 +124,7 @@ def parse_variant(s: str | None) -> dict:
             kw["stand_yaw_hold"] = bool(int(v))
         elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
             kw["arm_swing"] = float(v)
-        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "shabs", "hmpc"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
+        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
             path = {"tdz": "swing.touchdown_z", "fref": "mpc.force_ref_weight", "tswing": "timing.swing",
                     "tcycle": "timing.cycle", "hor": "timing.horizon", "kdz": "swing.kd_zeta",
                     "raii": "swing.raibert_int_gain", "psioff": "swing.psi_offset_scale",
@@ -144,7 +144,8 @@ def parse_variant(s: str | None) -> dict:
                     "fpd": "swing.stance_foot_pitch_damping",   # fpd=kd: 딛는 발 pitch 각속도 감쇠 모멘트 (MPC 밖, Q&A 9/30 Q12)
                     "sjd": "swing.stance_joint_damping",        # sjd=kd: 딛는 발 고정 관절 감쇠 (논문 식 (21) K_d 항, Q&A 9/30 Q13)
                     "sjdm": "swing.stance_joint_damping_mode",  # sjdm=2: 감쇠를 수평 미끄럼 · yaw 에만
-                    "uint": "mpc.input_interpolation",          # uint=1: 풀이 사이 u0 → u1 선형 보간 (Q&A 9/30 Q13)
+                    "uint": "mpc.input_interpolation",          # uint=s: 풀이 사이 u0 → u1 선형 보간, 기울기 배율 s (Q&A 9/30 Q13 · Q15)
+                    "uintm": "mpc.input_interpolation_mode",    # uintm=1: 디딤이 바뀌는 다리는 보간 안 함 (Q&A 9/30 Q15)
                     "shabs": "swing.stance_yaw_rate_absolute",  # shabs=1: 딛는 발 yaw hold 감쇠를 절대 yaw 각속도로 (Q&A 9/30 Q13)
                     "hmpc": "mpc.hold_in_mpc_weight"}[k]        # hmpc=w: yaw hold 를 MPC Mz 참조 비용으로 (yawhold=0 과 함께, Q&A 9/30 Q14)
             kw.setdefault("raw_over", {})[path] = float(v)
