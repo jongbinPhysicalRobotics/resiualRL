@@ -445,6 +445,8 @@ class ConvexMPC:
         # 변형 (Q&A 9/28 Q5): Residual MPC 논문식 풀이 — ρ 고정 · 반복 N 회 고정 · 종료 판정 / 재시도 / fallback 없음
         # (Jeon et al. T-RO 2026 III-B·C, Alg. 1: N_QP = 25, 초기 추정 = 공칭). 0 = reference 방식 (기본).
         self.fixed_iter = int(opts.pop("fixed_iter", 0) or 0)
+        self.fixed_iter_stand = int(opts.pop("fixed_iter_stand", 0) or 0)   # 변형 admms (Q&A 10/1 Q22): 서기 모드 반복 수 (0 = 같음)
+        self._iter_now = self.fixed_iter
         self.init_mode = str(opts.pop("init", "nominal"))
         if self.init_mode not in ("nominal", "warm", "hold", "zero"):
             raise ValueError(f"init must be nominal / warm / hold / zero, got {self.init_mode!r}")
@@ -733,6 +735,11 @@ class ConvexMPC:
                 X[:, 2] = np.where(st[:, 0], fz, 0.0)
                 X[:, 5] = np.where(st[:, 1], fz, 0.0)
             self._solver.warm_start(x=x_init, y=np.zeros(self.nc))
+        if self.fixed_iter_stand > 0:                         # 변형 admms: 모드에 따라 고정 반복 수 바꾸기
+            want = self.fixed_iter_stand if getattr(self, "_mode_now", None) == "standing" else self.fixed_iter
+            if want != self._iter_now:
+                self._solver.update_settings(max_iter=want)
+                self._iter_now = want
         res = self._solver.solve(raise_error=False)
         info["iters"] = int(res.info.iter)
         info["status"] = str(res.info.status)

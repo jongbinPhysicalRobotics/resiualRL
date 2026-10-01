@@ -490,6 +490,15 @@ class MitController:
         if self.mode == "standing":
             Jv, Jw = self.model.standing_jacobians()
             u_st = self.u_hold
+            if self.foot_model == "line" and int(float(cfg_get(cfg, "mpc.line_wrench_projection_stand", 0) or 0)):
+                # 변형 lprojs (Q&A 10/1 Q22): 서기에서도 MPC 해를 선 접촉 집합으로 자른다 (lproj=3 은 걷기 디딤 발 경로에만 있었다)
+                from leg_control import project_line_wrench
+                u_st = np.asarray(u_st, dtype=float).copy()
+                fy_ = np.asarray((self.last_info or {}).get("foot_yaw", [np.nan, np.nan]), dtype=float).reshape(-1, 2)[0]
+                l_ = float(cfg_get(cfg, "mpc.foot_half_length"))
+                for leg, fc, mc in ((LEFT, slice(0, 3), slice(6, 9)), (RIGHT, slice(3, 6), slice(9, 12))):
+                    Fg, Mg, _ = project_line_wrench(u_st[fc], u_st[mc], resolved_foot_yaw(fy_[leg]), self.mpc.template, l_, 2)
+                    u_st[fc], u_st[mc] = Fg, Mg
             # 서기 수정 (Q6) 은 '서기가 요청된' 경우만 — 걷기 전 1 s StandingSettle 에는 안 건다 (Q&A 9/27 Q1:
             # 걸면 걷기 시작 자세가 바뀌어 경계에 있는 0.6 m/s 가 20 s 에 전도)
             stand_fix = self.requested_mode == "standing"

@@ -102,6 +102,8 @@ def parse_variant(s: str | None) -> dict:
             kw.setdefault("osqp_settings", {})["fixed_iter"] = int(v)
         elif k == "init":                          # 고정 반복의 초기 추정: nominal (논문) / warm / zero
             kw.setdefault("osqp_settings", {})["init"] = str(v)
+        elif k == "admms":                         # 서기 모드 고정 ADMM 반복 수 (기본 = admm 과 같음) — Q&A 10/1 Q22
+            kw.setdefault("osqp_settings", {})["fixed_iter_stand"] = int(v)
         elif k == "ruiz":                          # OSQP Ruiz 스케일링 반복 수 (기본 10) — Q&A 9/30 Q16
             kw.setdefault("osqp_settings", {})["scaling"] = int(v)
         elif k == "rho":                           # OSQP ρ (기본 0.1)
@@ -126,7 +128,7 @@ def parse_variant(s: str | None) -> dict:
             kw["stand_yaw_hold"] = bool(int(v))
         elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
             kw["arm_swing"] = float(v)
-        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
+        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
             path = {"tdz": "swing.touchdown_z", "fref": "mpc.force_ref_weight", "tswing": "timing.swing",
                     "tcycle": "timing.cycle", "hor": "timing.horizon", "kdz": "swing.kd_zeta",
                     "raii": "swing.raibert_int_gain", "psioff": "swing.psi_offset_scale",
@@ -154,7 +156,8 @@ def parse_variant(s: str | None) -> dict:
                     "ksx": "swing.k_sched_fast_x",              # ksx=k: 곧게 빨리 걸을 때 전진 k_half 목표 (Q&A 10/1 Q20)
                     "ksy": "swing.k_sched_lat_y",               # ksy=k: 옆으로 걸을 때 옆 k_half 목표
                     "ksw": "swing.k_sched_turn_rate",           # ksw=w: |ψ̇| ≥ w 면 기본 k (기본 0.5 rad/s)
-                    "cmarw": "mpc.cop_margin_frac_walk"}[k]     # cmarw=ε: 걷기 전용 두 점 최소 하중 (서기는 cmar, Q&A 10/1 Q21)
+                    "cmarw": "mpc.cop_margin_frac_walk",        # cmarw=ε: 걷기 전용 두 점 최소 하중 (서기는 cmar, Q&A 10/1 Q21)
+                    "lprojs": "mpc.line_wrench_projection_stand"}[k]   # lprojs=1: 서기에서도 MPC 해 자르기 (Q&A 10/1 Q22)
             kw.setdefault("raw_over", {})[path] = float(v)
         elif k == "push":                          # 외란 (Q&A 9/29 Q11, 교수님 지시): Fx:Fy:t0:dur — 진행 방향 기준 [N],
             f_ = [float(x) for x in str(v).split(":")]   # t0 = 측정 창 시작 (걷기 시작 / 서기면 0) 뒤 [s], dur [s]. 몸통 CoM 에 가함
