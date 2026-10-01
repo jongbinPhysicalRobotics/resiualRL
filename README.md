@@ -5,6 +5,7 @@
 ```
 residual RL/                  ← 최상위
 ├── MPC/           지금까지 해온 convex MPC 전부 (src/, logs/, 문서)
+├── Convex MPC/    발표용 MIT Humanoid convex MPC (A30 고정, 자기완결 — 2026-10-01)
 ├── pure RL/       향후 순수 E2E 강화학습 (대조군)
 ├── MPC + RL/      향후 residual 정책 (최종 목표 구조)
 ├── reference/     ispaik06/convex-mpc-biped git clone (C++ 대조 구현)
@@ -17,6 +18,7 @@ residual RL/                  ← 최상위
 | 폴더 | 들어갈 것 | 현재 |
 |---|---|---|
 | **[MPC/](MPC/)** | SRB wrench MPC 구현·실험·기록 | **진행 중** — 0.5 m/s 120초. 목표 1 m/s |
+| [Convex MPC/](Convex%20MPC/) | 발표용 실행기 (casadi_mit A30 복사본 + 로봇 모델) | `python "Convex MPC/convex_mpc.py" --vx 1.0` |
 | [pure RL/](pure%20RL/) | E2E RL 베이스라인 | 미착수 (랩 GPU 머신에서) |
 | [MPC + RL/](MPC%20+%20RL/) | residual 정책 | 미착수 — 1 m/s 달성 후 |
 | [reference/](reference/) | 남의 구현 (clone) | 분석 완료 → [REFERENCE_ANALYSIS.md](REFERENCE_ANALYSIS.md) |
