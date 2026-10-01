@@ -30,12 +30,42 @@ python3 -m venv .venv
 | 걸으며 돌기 | `python convex_mpc.py --vx 0.6 --wz 1.0` |
 | 제자리 서기 | `python convex_mpc.py --gait stand` |
 | 화면 없이 120 s 판정 | `python convex_mpc.py --vx 1.0 --headless` |
+| 영상으로 저장 (MP4) | `python convex_mpc.py --vx 1.0 --seconds 15 --record vx10.mp4` |
 
 `python` 자리에는 가상환경의 파이썬을 씁니다 (예: `.venv/bin/python`). 어느 폴더에서 실행해도 됩니다.
 
 - 걷기는 시작 후 1 s 동안 서서 자세를 잡고, 이어서 2 s 동안 명령 속도까지 올라갑니다.
 - 뷰어는 기본 120 s 동안 돌고, 넘어지면 멈춥니다.
 - Ubuntu Wayland 에서는 뷰어용 `PYGLFW_LIBRARY_VARIANT=x11` 이 자동으로 붙습니다.
+
+### 영상 저장 (`--record`)
+
+뷰어를 띄우지 않고 MP4 파일로 바로 저장합니다. 화면 녹화보다 이 방법을 권합니다.
+
+- 프레임을 시뮬 시간 기준으로 찍습니다 (기본 50 fps = 10 틱마다). 그래서 계산이 실시간보다 느려도 영상은 실제 속도로 재생됩니다.
+- 로봇의 움직임은 `--headless` 판정과 끝자리까지 같습니다 (측정, 2026-10-01). 화면 그리기는 제어에 영향을 주지 않습니다.
+- 카메라는 뷰어와 같은 추적 카메라입니다. 왼쪽 위에 시간, 명령 속도, 실측 속도 (전신 CoM, 0.5 s 평균), 외란 크기가 표시됩니다.
+- 넘어지면 1 s 더 찍고 멈춥니다. H.264 MP4 라 PowerPoint 에서 바로 열립니다.
+
+| 옵션 | 기본 | 뜻 |
+|---|---|---|
+| `--record 파일.mp4` | — | 저장할 파일. `--seconds` 가 길이입니다 (걷기는 앞에 서기 1 s 가 붙습니다) |
+| `--size` | 1280x720 | 해상도. 예: `--size 1920x1080` |
+| `--fps` | 50 | 프레임률 |
+| `--nohud` | — | 글자 끄기 |
+| `--clean` | — | 참조 표시 (스윙 궤적 · 착지 목표 · CoM 참조) 끄기 |
+
+예시입니다.
+
+```bash
+python convex_mpc.py --vx 1.0 --seconds 15 --record vx10.mp4
+python convex_mpc.py --wz 2.5 --seconds 15 --record wz25.mp4 --clean
+python convex_mpc.py --gait stand --seconds 8 --push 30:0:3:0.2 --record stand_push.mp4
+python convex_mpc.py --vx 0.5 --seconds 15 --push 0:30:6:0.2 --record walk_push.mp4
+```
+
+15 s 영상은 1280x720 기준 약 1 분 걸립니다. 외란 영상은 먼저 `--headless` 로 같은 명령이 버티는지 확인하고 찍는 것이 좋습니다.
+걷는 중 옆 40 N 은 미는 시점에 따라 결과가 갈립니다. vx 0.7 에서 걷기 시작 3 · 6 · 10 s 뒤에 밀면 ✗ · ✓ · ✗ 였습니다 (측정).
 
 ### 뷰어 조작
 

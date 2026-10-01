@@ -10,3 +10,6 @@ matplotlib==3.11.1
 pillow==12.3.0
 casadi==3.8.0
 glfw==2.10.2
+# Convex MPC/convex_mpc.py --record (MP4 녹화) 용 — 2026-10-01 추가. ffmpeg 는 imageio-ffmpeg 안에 들어 있다.
+imageio==2.38.0
+imageio-ffmpeg==0.6.0

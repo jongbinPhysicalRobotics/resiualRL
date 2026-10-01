@@ -7,3 +7,7 @@ quadprog==0.1.13
 PyYAML==6.0.3
 casadi==3.8.0
 glfw==2.10.2
+# --record (MP4 녹화) 용. ffmpeg 는 imageio-ffmpeg 안에 들어 있다.
+imageio==2.38.0
+imageio-ffmpeg==0.6.0
+pillow==12.3.0
