@@ -70,9 +70,9 @@ python3 -m venv .venv
   MPC 해를 이 집합으로 한 번 더 잘라서 실제로 가하는 힘은 걷기 · 서기 모두 제약을 정확히 지킵니다.
 - **걸음**: 주기 0.55 s, 스윙 0.22 s 이고, 착지점은 capture point 식 (k_half 0.41, 명령에 따라 0.35 ~ 0.47) 입니다.
 - 저수준: 스윙 다리 임피던스, 딛는 발 yaw hold (관절 되먹임), 팔 반대 흔들기.
-- A30 의 숫자는 전부 [mit_controller.yaml](mit_controller.yaml) 에 있습니다. reference 값에서 바꾼 줄에는 `# A30 <키> (원래 값)` 주석이 달려 있습니다.
+- A30 의 숫자는 전부 [mit_controller.yaml](mit_controller.yaml) 에 있습니다. 기본값에서 바꾼 줄에는 `# A30 <키> (원래 값)` 주석이 달려 있습니다.
   yaml 설정 경로가 없는 값 (profile · fix · foot · Raibert 이득 · ypath · 팔 흔들기 · OSQP 반복 수 · ρ · warm start) 은 맨 아래 `launcher:` 절에 있고, [convex_mpc.py](convex_mpc.py) 가 읽어서 넘깁니다.
-  원본 폴더 (casadi_mit) 는 같은 값을 `--var` 문자열로 덮어씁니다. 원본 yaml 에는 reference 값이 그대로 있습니다.
+  원본 폴더 (casadi_mit) 는 같은 값을 `--var` 문자열로 덮어씁니다. 원본 yaml 에는 바꾸기 전 기본값이 그대로 있습니다.
 
 ## 시험 결과와 알려진 한계 (A30, 120 s, 측정 — Q&A 9/30 Q22 · Q23)
 
@@ -120,3 +120,4 @@ A30 은 A29 에서 앞발 벌림만 끈 설정입니다. 벌림은 회전 명령
 | `mit_controller.yaml`, `config.py` | **A30 설정 전부** (바꾼 줄마다 원래 값 주석) 와 로더 |
 | `viewer_hud.py`, `paths.py` | 뷰어 HUD, 폴더 안 경로 |
 | `models/mit_humanoid/` | 로봇 모델 (scene.xml, mit_humanoid.xml, meshes_v3). 출처 · 라이선스는 그 안의 README 와 LICENSE_source |
+| `NOTICE.md` | 컨트롤러 구조의 출처와 라이선스 |

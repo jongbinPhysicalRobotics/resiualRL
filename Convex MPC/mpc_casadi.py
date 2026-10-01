@@ -1,32 +1,32 @@
-"""CasADi 형식 condensed MPC — 이식 (mpc.py) 과 같은 QP 를 기호식 + 자동미분으로 만든다 (Q&A 9/26 Q1 계획 1·2 단계).
+"""CasADi 형식 condensed MPC — mpc.py 와 같은 QP 를 기호식 + 자동미분으로 만든다 (Q&A 9/26 Q1 계획 1·2 단계).
 
 왜: MIT 재작업은 "모델을 기호식으로 한 번 적고 미분·구조를 도구가 만드는" CasADi 형식으로 가기로 함
-(나중에 Residual MPC 로 넘어갈 때 그대로 이어짐). 첫 단계로 reference 의 condensed QP 를 CasADi 로
-다시 만들고 기존 이식과 수치로 대조한다 (검증 스크립트: 15_casadi_check.py).
+(나중에 Residual MPC 로 넘어갈 때 그대로 이어짐). 첫 단계로 mpc.py 의 condensed QP 를 CasADi 로
+다시 만들고 mpc.py 와 수치로 대조한다 (검증 스크립트: 15_casadi_check.py).
 
 무엇이 기호식인가 (mpc.py 의 손 채움을 대체):
   1. 연속 동역학 f(x, u; ψ_k, r_k, m, I_B) 를 그대로 적고  A_c = ∂f/∂x, B_c = ∂f/∂u 를 **자동미분**으로.
      (mpc.continuous_matrices 의 손 채움 — I_k⁻¹[r]×, Rᵀ 블록 — 이 유도와 맞는지가 검증 포인트)
-  2. ZOH 절단 이산화 (reference 식 그대로: A_d = I + dtA + ½dt²A², B_d = dtB + ½dt²AB + dt³/6 A²B)
-  3. 비용 회전 Q_k = T_kᵀ Q T_k (bodyYawStateCost) 와 발 yaw 제약 회전 C_W = C_F·blkdiag(Rᵀ,Rᵀ)
-숫자 조립 (구조적 — Q&A 9/25 Q11 에서 C++ 과 0 ~ 9e-17 로 이미 검증된 부분은 재사용):
+  2. ZOH 절단 이산화 (mpc.discretize_zoh 와 같은 식: A_d = I + dtA + ½dt²A², B_d = dtB + ½dt²AB + dt³/6 A²B)
+  3. 비용 회전 Q_k = T_kᵀ Q T_k (mpc.yaw_state_cost) 와 발 yaw 제약 회전 C_W = C_F·blkdiag(Rᵀ,Rᵀ)
+숫자 조립 (구조적 — Q&A 9/25 Q11 에서 0 ~ 9e-17 로 이미 검증된 부분은 재사용):
   lift (condensing), H/q 곱, 고정 sparsity 패턴, OSQP 층 (shifted warm start·cold reset·fallback) 은
   ConvexMPC 를 상속해서 그대로 쓴다. 즉 이 클래스는 "공식을 만드는 부분"만 바꾼다.
 
 foot_model 플래그 (기본 "ref" = 기존 동작):
-  "ref"  : reference 그대로 — CoP 폭 b=0.01 허용, |Mz| ≤ 0.0657µFz, roll 등식 없음.
-  "mx0"  : reference 제약 그대로 + mx^F = 0 등식만 (reference no_roll_moment 와 같음 — Q&A 9/27 Q1: mx 효과만 분리)
+  "ref"  : 사각 발 제약 (mpc.foot_constraint_template) — CoP 폭 b=0.01 허용, |Mz| ≤ 0.0657µFz, roll 등식 없음.
+  "mx0"  : "ref" 제약 그대로 + mx^F = 0 등식만 (no_roll_moment 접촉 모델과 같음 — Q&A 9/27 Q1: mx 효과만 분리)
   "line" : OA-MPC 선 접촉 (Ding et al. Humanoids 2022 §III-F, Q&A 9/26 논의). 발이 선(발끝~뒤꿈치)으로
            닿는 우리 MIT 모델에 물리적으로 맞는 제약:
-             mx = 0 (발 좌표계, D 행 등식 — reference no_roll_moment 자리)
+             mx = 0 (발 좌표계, D 행 등식 — no_roll_moment 자리)
              CoP: −lt·Fz ≤ my ≤ lh·Fz  (lt = lh = foot_half_length)
              비틀림 (발끝·뒤꿈치 두 점 마찰에서 유도, 식 (12)):
                |mz + lh·Fy| ≤ µ(lh·Fz − my),  |lt·Fy − mz| ≤ µ(lt·Fz + my)
-           → reference 의 CoP 폭 b 행과 0.0657 비틀림 행을 대체. Fx 마찰·Fz 범위는 동일.
+           → "ref" 의 CoP 폭 b 행과 0.0657 비틀림 행을 대체. Fx 마찰·Fz 범위는 동일.
 
 사용:
     from mpc_casadi import CasadiCondensedMPC
-    mpc = CasadiCondensedMPC(cfg)                      # 이식 ConvexMPC 와 같은 인터페이스
+    mpc = CasadiCondensedMPC(cfg)                      # mpc.ConvexMPC 와 같은 인터페이스
     mpc = CasadiCondensedMPC(cfg, foot_model="line")   # OA-MPC 선 접촉
 """
 from __future__ import annotations
@@ -74,7 +74,7 @@ def build_step_function(dt: float) -> ca.Function:
 
 
 def build_qk_function() -> ca.Function:
-    """(psi, Q_diag(13)) → Q_k = T_kᵀ diag(Q) T_k  (bodyYawStateCost)."""
+    """(psi, Q_diag(13)) → Q_k = T_kᵀ diag(Q) T_k  (mpc.yaw_state_cost)."""
     psi = ca.SX.sym("psi")
     Qd = ca.SX.sym("Qd", NX)
     RT = _rz(psi).T
@@ -86,7 +86,7 @@ def build_qk_function() -> ca.Function:
 
 
 def build_rot_function(template: np.ndarray) -> ca.Function:
-    """(yaw) → C_W = C_F · blkdiag(Rᵀ, Rᵀ)  (yawRotatedFootConstraintValue)."""
+    """(yaw) → C_W = C_F · blkdiag(Rᵀ, Rᵀ)  (mpc.yaw_rotated_block)."""
     yaw = ca.SX.sym("yaw")
     RT = _rz(yaw).T
     T = ca.DM(template)
@@ -222,7 +222,7 @@ class CasadiCondensedMPC(ConvexMPC):
         return H, q
 
     def _rot_steps(self, yaws):
-        """스텝별 yaw (N,) → (N,12,6) 회전된 제약 블록. 모두 같으면 한 번만 계산 (reference 경로와 같은 값)."""
+        """스텝별 yaw (N,) → (N,12,6) 회전된 제약 블록. 모두 같으면 한 번만 계산 (다리당 yaw 하나일 때와 같은 값)."""
         fn = self._rot_fn_walk if getattr(self, "_mode_now", None) == "walking" else self._rot_fn
         if np.all(yaws == yaws[0]):
             return np.array(fn(yaws[0]))[None].repeat(len(yaws), 0)
@@ -233,7 +233,7 @@ class CasadiCondensedMPC(ConvexMPC):
         stance = np.array([np.asarray(s.stance, dtype=bool) for s in steps]).reshape(n, 2)
         min_scale = np.clip(np.array([np.asarray(s.min_scale, dtype=float) for s in steps]).reshape(n, 2), 0.0, 1.0)
         fy = np.asarray(foot_yaw, dtype=float)
-        if fy.ndim == 1:                                     # reference: 다리당 yaw 하나
+        if fy.ndim == 1:                                     # 다리당 yaw 하나 → 전 스텝 공통
             fy = np.tile(fy.reshape(1, 2), (n, 1))
         yawL = np.array([resolved_foot_yaw(v) for v in fy[:, 0]])   # (N,) — 변형 foot2 는 스텝별 (Q&A 9/28 Q10)
         yawR = np.array([resolved_foot_yaw(v) for v in fy[:, 1]])

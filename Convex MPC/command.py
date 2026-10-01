@@ -1,7 +1,6 @@
-"""사용자 명령: UserCommand, CommandFilter (reference 저역통과), CommandSchedule (headless 주입기, D3).
+"""사용자 명령: UserCommand, CommandFilter (저역통과), CommandSchedule (headless 주입기).
 
-CommandFilter = My_Controller.cpp:610-654 updateFilteredUserCommand + ControllerConfig.cpp:649-656 clampUserCommand
-               + My_Controller.cpp:28-33 lowPassBlendAlpha (spec 05 §3.2):
+CommandFilter = clamp + 1 차 저역통과 (low_pass_blend_alpha):
     raw = clamp(raw)                                   # x,y,psi 만 ±max (max 가 무한이면 그대로)
     zero_motion → raw.x,y,psi = 0                      # FSM BrakingToStanding
     첫 호출: filtered = raw (그대로 반환)
@@ -11,11 +10,11 @@ CommandFilter = My_Controller.cpp:610-654 updateFilteredUserCommand + Controller
     body_height_offset_m = raw (필터 없음)
     standing_roll/pitch_offset = prev + a(0.70) (raw − prev)
     filtered = clamp(filtered)
-dt = 0 인 틱 (컨트롤러 첫 틱, resetSwingState 가 있는 모든 FSM 전이 틱 = Standing→Walking 포함) 에선 a = 1 이라
-filtered = raw (snap). dt 는 호출자가 max(0, t − last_control_time) 로 준다 (My_Controller.cpp:1390).
+dt = 0 인 틱 (컨트롤러 첫 틱, _reset_swing_state 가 있는 모든 FSM 전이 틱 = Standing→Walking 포함) 에선 a = 1 이라
+filtered = raw (snap). dt 는 호출자가 max(0, t − last_control_time) 로 준다.
 
-CommandSchedule (D3): reference headless 는 x_dot 만 스케줄할 수 있어서 y_dot / psi_dot 까지 넣는 주입기를 둔다.
-기본 (07 D3) = 첫 컨트롤러 틱부터 raw 명령이 있는 "constant" (reference 기본: raw x_dot 가 t = 1.0 s 부터, 컨트롤러는 1.998 s 시작).
+CommandSchedule: headless 실행에서 x_dot / y_dot / psi_dot 를 시각에 따라 넣는 주입기.
+기본 = 첫 컨트롤러 틱부터 raw 명령이 있는 "constant".
 """
 from __future__ import annotations
 
@@ -29,8 +28,7 @@ MOTION_FIELDS = ("x_dot", "y_dot", "psi_dot")
 
 @dataclass
 class UserCommand:
-    """ref: common/include/Utilities/UserCommand.h:4-13.
-    x_dot [m/s, yaw 프레임 +x 앞], y_dot [m/s, +y 왼쪽], psi_dot [rad/s, +z 반시계]."""
+    """x_dot [m/s, yaw 프레임 +x 앞], y_dot [m/s, +y 왼쪽], psi_dot [rad/s, +z 반시계]."""
     x_dot: float = 0.0
     y_dot: float = 0.0
     psi_dot: float = 0.0
@@ -48,22 +46,19 @@ class UserCommand:
 
 
 def low_pass_blend_alpha(tau: float, dt: float) -> float:
-    """ref: My_Controller.cpp:28-33.  !(tau>0) || !(dt>0) → 1; else clamp(-expm1(-dt/tau), 0, 1)."""
+    """not (tau > 0) 또는 not (dt > 0) → 1; 아니면 clamp(-expm1(-dt/tau), 0, 1)."""
     if not (tau > 0.0) or not (dt > 0.0):
         return 1.0
     return float(np.clip(-np.expm1(-dt / tau), 0.0, 1.0))
 
 
 def _clamp_opt(v: float, max_abs: float) -> float:
-    """ref: ControllerConfig.cpp:51-56 clampWithOptionalLimit."""
     if not np.isfinite(max_abs):
         return v
     return float(min(max(v, -max_abs), max_abs))
 
 
 class CommandFilter:
-    """ref: My_Controller.cpp:610-654."""
-
     def __init__(self, cfg):
         f = cfg.user_command_filter
         self.x_tau = float(f.x_dot_tau)
@@ -81,7 +76,7 @@ class CommandFilter:
         self.initialized = False
 
     def clamp(self, c: UserCommand) -> UserCommand:
-        """ref: ControllerConfig.cpp:649-656 clampUserCommand (x, y, psi 만)."""
+        """x, y, psi 만 ±max 로 자른다 (max 가 무한이면 그대로)."""
         out = c.copy()
         out.x_dot = _clamp_opt(out.x_dot, self.x_max)
         out.y_dot = _clamp_opt(out.y_dot, self.y_max)
@@ -89,7 +84,7 @@ class CommandFilter:
         return out
 
     def update(self, raw: UserCommand | None, dt: float, zero_motion: bool = False) -> UserCommand:
-        """한 틱 갱신. 반환 = filtered 의 복사본. raw=None 이면 UserCommand{} (reference 의 nullptr 처리)."""
+        """한 틱 갱신. 반환 = filtered 의 복사본. raw=None 이면 UserCommand() (모두 0) 로 본다."""
         r = self.clamp(raw if raw is not None else UserCommand())
         if zero_motion:
             r.x_dot = r.y_dot = r.psi_dot = 0.0
@@ -116,7 +111,7 @@ class CommandFilter:
 
 
 # ----------------------------------------------------------------------------------------------------------------
-# 스케줄 (D3)
+# 스케줄
 # ----------------------------------------------------------------------------------------------------------------
 _FIELD_NAMES = tuple(f.name for f in fields(UserCommand))
 
@@ -124,12 +119,10 @@ _FIELD_NAMES = tuple(f.name for f in fields(UserCommand))
 class CommandSchedule:
     """raw 명령 스케줄. profile = {필드: 명세}. 명세 종류:
 
-      숫자 v                                → constant: t = 0 부터 v (07 D3 기본, reference headless 기본 의미)
+      숫자 v                                → constant: t = 0 부터 v (기본)
       [(t0, v0), (t1, v1), ...]             → step (piecewise constant): 시각 t_i 부터 v_i, **첫 점의 값은 그 시각 전에도**
-                                              (reference CONVEXMPC_HEADLESS_X_DOT_PROFILE, SimulationRunner.cpp:503-513)
       {"points": [...], "interp": "linear"} → 점 사이 선형 보간, 양 끝 밖은 끝값 유지
-      {"final": v, "rate": r, "start": t0}  → reference 램프 (SimulationRunner.cpp:514-522):
-                                              t < t0 → 0 (reference 는 이전 값 유지 = 0), t ≥ t0 →
+      {"final": v, "rate": r, "start": t0}  → 램프: t < t0 → 0, t ≥ t0 →
                                               copysign(min(|v|, r (t − t0)), v); r <= 0 이면 바로 v
     명시 안 한 필드는 0. 예: CommandSchedule({"x_dot": 0.6}); CommandSchedule({"psi_dot": [(0, 0), (1.0, 1.3)]}).
     """
@@ -194,7 +187,7 @@ class CommandSchedule:
     # 편의 생성자 ------------------------------------------------------------------------------------------------
     @classmethod
     def constant(cls, x_dot=0.0, y_dot=0.0, psi_dot=0.0) -> "CommandSchedule":
-        """t = 0 부터 일정 (07 D3 기본)."""
+        """t = 0 부터 일정 (기본)."""
         return cls({"x_dot": x_dot, "y_dot": y_dot, "psi_dot": psi_dot})
 
     @classmethod
@@ -204,6 +197,6 @@ class CommandSchedule:
 
     @classmethod
     def ramp(cls, start: float, rate: float, x_dot=0.0, y_dot=0.0, psi_dot=0.0) -> "CommandSchedule":
-        """reference 램프 공식 (rate: 필드 단위/s) 을 세 필드에 각각."""
+        """램프 공식 (rate: 필드 단위/s) 을 세 필드에 각각."""
         return cls({k: {"final": v, "rate": rate, "start": start}
                     for k, v in (("x_dot", x_dot), ("y_dot", y_dot), ("psi_dot", psi_dot))})

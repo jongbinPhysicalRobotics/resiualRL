@@ -1,21 +1,21 @@
-"""Reference convex MPC (SRB, Di Carlo 틀) — reference C++ 를 그대로 옮긴 것 (07_port_design.md §3.7).
+"""Convex MPC (SRB, Di Carlo 틀).
 
-구성 (C++ 대응):
-    build_reference   ReferenceTrajectory.cpp:8-83 + BodyMotionReference.cpp (yaw mode 'always')   spec 03 §4.3 / 02 §6.3
-    mpc_foot_yaw      My_Controller.cpp:930-946 (mpcFootYawForSide)                                spec 05 §8.1 / 02 §5.5
-    ConvexMPC         MPCFormulation.cpp:39-107 (A_c/B_c, ZOH, lifted A_qp/B_qp)                   spec 02 §7
-                      ConvexMPC.cpp:675-685, 835-869 (yaw 회전 cost, H, q)                          spec 02 §8
-                      ConvexMPC.cpp:128-268, 406-576 (행 단위 고정 패턴, C_F 회전, 스윙 등식)       spec 02 §9
-                      GaitScheduler.cpp:134-193 (C_bound: Fz 상한 / −min_scale·Fz_min)             spec 02 §5.3
-                      ConvexMPC.cpp:880-1108 (OSQP cold/warm, 재시도, shifted warm start)          spec 02 §10
-                      My_Controller.cpp:1016-1052 (실패 시 Fz = m|g|/nStance fallback)              spec 05 §8.4
+구성:
+    build_reference   참조 궤적 X_ref (yaw mode 'always')
+    mpc_foot_yaw      제약 회전용 발 yaw
+    ConvexMPC         A_c/B_c, ZOH, lifted A_qp/B_qp
+                      yaw 회전 cost, H, q
+                      행 단위 고정 패턴, C_F 회전, 스윙 등식
+                      C_bound: Fz 상한 / −min_scale·Fz_min
+                      OSQP cold/warm, 재시도, shifted warm start
+                      실패 시 Fz = m|g|/nStance fallback
 
-규약 (07 §2): 다리 0 = Left, 1 = Right.  u_k = [F_L, F_R, M_L, M_R] (world, 지면이 몸에 주는 wrench,
+규약: 다리 0 = Left, 1 = Right.  u_k = [F_L, F_R, M_L, M_R] (world, 지면이 몸에 주는 wrench,
 모멘트는 발 site 기준).  x = [roll, pitch, yaw_unwrapped, com(3), omega_W(3), v_com(3), g].
 X (lifted) 의 행 블록 k = x_{k+1} (u_k 적용 후) ↔ X_ref 행 k.
 
-D5: python osqp 1.1.3 에 reference 의 명시 설정 (verbose F, warm_start T, polish F, max_iter 200,
-adaptive_rho T) + spec 02 §10.1 의 1.x 보정 (adaptive_rho_interval 100, check_dualgap False) 을 준다.
+OSQP: python osqp 1.1.3 에 verbose F, warm_start T, polish F, max_iter 200,
+adaptive_rho T (adaptive_rho_interval 50, check_dualgap 1 — ConvexMPC.__init__ 의 settings) 를 준다.
 solver="quadprog" 는 비교용 정확 QP (warm start 없음).
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ try:
 except ImportError:          # quadprog 만 쓰는 경우
     osqp = None
 
-# u 인덱스 (ConvexMPC.cpp:192-193)
+# u 인덱스
 LEFT_MAP = np.array([0, 1, 2, 6, 7, 8])
 RIGHT_MAP = np.array([3, 4, 5, 9, 10, 11])
 NX, NU = 13, 12
@@ -59,7 +59,7 @@ def _cfg(cfg, path, default=None):
 
 
 def _horizon(cfg):
-    """(N, dt_mpc). dt = horizon / steps 를 C++ 와 같은 식으로 (ControllerConfig.cpp:645-647)."""
+    """(N, dt_mpc). dt = horizon / steps."""
     n = int(_cfg(cfg, "timing.horizon_steps"))
     dt = float(_cfg(cfg, "timing.horizon")) / float(n)
     return n, dt
@@ -76,17 +76,15 @@ def _mode_str(mode) -> str:
 
 
 def wrap_to_pi(a: float) -> float:
-    """AngleUtils.h:8-10"""
     return float(np.arctan2(np.sin(a), np.cos(a)))
 
 
 def lift_angle_near(target_wrapped: float, current_unwrapped: float) -> float:
-    """AngleUtils.h:16-18  current + wrapToPi(target − current)"""
+    """current + wrap_to_pi(target − current)"""
     return current_unwrapped + wrap_to_pi(target_wrapped - current_unwrapped)
 
 
 def Rz(a: float) -> np.ndarray:
-    """MatrixUtils.h:11-21"""
     c, s = np.cos(a), np.sin(a)
     return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
 
@@ -103,7 +101,7 @@ def Rz_batch(a: np.ndarray) -> np.ndarray:
 
 
 def skew_batch(v: np.ndarray) -> np.ndarray:
-    """MatrixUtils.h:23-30  skew(v) w = v × w.  v (n,3) → (n,3,3)"""
+    """skew(v) w = v × w.  v (n,3) → (n,3,3)"""
     S = np.zeros((len(v), 3, 3))
     S[:, 0, 1] = -v[:, 2]
     S[:, 0, 2] = v[:, 1]
@@ -115,28 +113,28 @@ def skew_batch(v: np.ndarray) -> np.ndarray:
 
 
 
-# Reference trajectory 
+# 참조 궤적
 @dataclass
 class RefOut:
     X_ref: np.ndarray      # (N,13)  행 k ↔ x_{k+1}
     psi: np.ndarray        # (N,)    Rz(psi_k) (unwrapped)
     r: np.ndarray          # (N,2,3) r[k,leg] = desired_foot[leg] − p_ref[k]  (world)
-    tk: np.ndarray         # (N,)    t0 + k·dt  (cycle 원점 기준, HorizonClock.h:32-34)
+    tk: np.ndarray         # (N,)    t0 + k·dt  (cycle 원점 기준)
 
 
 def build_reference(filtered_cmd, seed_x, desired_feet, clock, cfg) -> RefOut:
-    """ReferenceTrajectory::build (ReferenceTrajectory.cpp:8-83) with yaw_integration_mode 'always'.
+    """참조 궤적 (yaw_integration_mode 'always').
 
-    seed_x: 호출자가 모드별로 만든 seed (My_Controller.cpp:966-978, spec 05 §8.2).
+    seed_x: 호출자가 모드별로 만든 seed.
         walking : x0 에 roll/pitch = bodyTarget.euler_W[0:2], z = nominalHeight_W
         standing: [0:3] = euler_W, [3:6] = nominalPosition_W, [5] = nominalHeight_W
-    filtered_cmd: x_dot, y_dot, psi_dot, body_height_offset_m (필터된 명령, MC:610-654)
-    desired_feet: (2,3) 이번 tick 의 목표 발 위치 (horizon 전체에 상수, RT:65-66)
+    filtered_cmd: x_dot, y_dot, psi_dot, body_height_offset_m (필터된 명령)
+    desired_feet: (2,3) 이번 tick 의 목표 발 위치 (horizon 전체에 상수)
     clock: .tk(k) → t0 + k·dt  (없으면 tk = k·dt)
     """
     mode = str(_cfg(cfg, "reference_trajectory.yaw_integration_mode", "always")).lower()
     if mode != "always":
-        # single_support/double_support 는 gait.bothFeetStance(tk − dt/2) gate 필요 (BMR:7-24). MIT 는 always.
+        # single_support/double_support 는 양발 디딤 (tk − dt/2) 판정 gate 필요. MIT 는 always.
         raise NotImplementedError(f"yaw_integration_mode {mode!r} not ported (MIT uses 'always')")
     N, dt = _horizon(cfg)
     seed = np.asarray(seed_x, dtype=float)
@@ -150,7 +148,7 @@ def build_reference(filtered_cmd, seed_x, desired_feet, clock, cfg) -> RefOut:
     psi0 = seed[2]
     gravity = seed[12]
     p_ref = seed[3:6].copy()
-    p_ref[2] += h_off                                   # RT:32-33
+    p_ref[2] += h_off
     euler_ref = seed[0:3].copy()
     psi_ref = psi0
 
@@ -160,33 +158,33 @@ def build_reference(filtered_cmd, seed_x, desired_feet, clock, cfg) -> RefOut:
     r = np.zeros((N, 2, 3))
     for k in range(N):
         tk = clock.tk(k) if clock is not None else float(k) * dt
-        if k > 0 and dt > 0.0:                          # BMR advanceYaw: dt>0 && shouldAdvanceYaw (always)
+        if k > 0 and dt > 0.0:                          # yaw 적분 (dt > 0, always)
             psi_ref = psi_ref + psi_dot * dt
         psi_k = psi_ref
         c, s = np.cos(psi_k), np.sin(psi_k)
-        v_ref = np.array([c * ux - s * uy, s * ux + c * uy, 0.0])   # Rz(psi_k)·[x_dot, y_dot, 0]  (BMR:58-60)
+        v_ref = np.array([c * ux - s * uy, s * ux + c * uy, 0.0])   # Rz(psi_k)·[x_dot, y_dot, 0]
         if k > 0:
-            if dt > 0.0:                                # BMR advancePlanarPosition
+            if dt > 0.0:                                # 평면 위치 적분
                 p_ref = p_ref + np.array([c * ux - s * uy, s * ux + c * uy, 0.0]) * dt
-            p_ref[2] = seed[5] + h_off                  # RT:61
+            p_ref[2] = seed[5] + h_off
         TK[k] = tk
         PSI[k] = psi_k
-        r[k, 0] = feet[0] - p_ref                       # RT:65
-        r[k, 1] = feet[1] - p_ref                       # RT:66
+        r[k, 0] = feet[0] - p_ref
+        r[k, 1] = feet[1] - p_ref
         X[k, 0:3] = euler_ref
         X[k, 2] = psi_k
         X[k, 3:6] = p_ref
-        X[k, 8] = psi_dot                               # yawRate (always) — RT:77-80
+        X[k, 8] = psi_dot                               # yaw 각속도 (always)
         X[k, 9:12] = v_ref
         X[k, 12] = gravity
     return RefOut(X_ref=X, psi=PSI, r=r, tk=TK)
 
 
 def mpc_foot_yaw(state, leg: int, active: bool, touchdown_yaw: float) -> float:
-    """mpcFootYawForSide (My_Controller.cpp:930-946).
+    """MPC 제약 회전용 발 yaw.
 
     active 이면 측정된 발 SITE x축의 yaw 를 touchdown yaw 근처로 lift, 아니면 touchdown yaw.
-    footYawFromXAxisWorld (MC:165-176) 가 throw 하는 경우 (비유한 / 수평 성분 ≤ 1e-9) → touchdown yaw.
+    발 x축이 비유한이거나 수평 성분 ≤ 1e-9 이면 → touchdown yaw.
     """
     if active:
         x_axis = np.asarray(state.foot_R_W[leg])[:, 0]
@@ -197,10 +195,10 @@ def mpc_foot_yaw(state, leg: int, active: bool, touchdown_yaw: float) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Formulation (MPCFormulation.cpp:39-107) — 배치 numpy
+# Formulation — 배치 numpy
 # ---------------------------------------------------------------------------
 def continuous_matrices(psi: np.ndarray, r: np.ndarray, inertia_B: np.ndarray, mass: float):
-    """A_c (N,13,13), B_c (N,13,12), I_k (N,3,3).  MPCFormulation.cpp:63-90.
+    """A_c (N,13,13), B_c (N,13,12), I_k (N,3,3).
 
     A_c[0:3,6:9] = R_k^T,  A_c[3:6,9:12] = I,  A_c[9:12,12] = e_z
     B_c[6:9,0:3] = I_k^-1 [r_L]x, [6:9,3:6] = I_k^-1 [r_R]x, [6:9,6:9] = [6:9,9:12] = I_k^-1,
@@ -230,8 +228,8 @@ def continuous_matrices(psi: np.ndarray, r: np.ndarray, inertia_B: np.ndarray, m
 
 
 def discretize_zoh(A_c: np.ndarray, B_c: np.ndarray, dt: float):
-    """discretizeZOH (MPCFormulation.cpp:10-26), 배치.
-    A_d = I + dt A + ½dt² A²;  B_d = dt B + ½dt² A B + dt³/6 A² B  (C++ 식 그대로, 3차항 포함 — 값은 0)."""
+    """ZOH 절단 이산화, 배치.
+    A_d = I + dt A + ½dt² A²;  B_d = dt B + ½dt² A B + dt³/6 A² B  (3차항 포함 — 값은 0)."""
     A_sq = A_c @ A_c
     A_d = np.eye(NX)[None] + dt * A_c + (0.5 * dt * dt) * A_sq
     B_d = dt * B_c + (0.5 * dt * dt) * (A_c @ B_c) + (dt * dt * dt / 6.0) * (A_sq @ B_c)
@@ -239,10 +237,10 @@ def discretize_zoh(A_c: np.ndarray, B_c: np.ndarray, dt: float):
 
 
 def lift(A_d: np.ndarray, B_d: np.ndarray):
-    """A_qp (13N,13), B_qp (13N,12N)  (MPCFormulation.cpp:92-106), C++ 곱 순서 그대로.
+    """A_qp (13N,13), B_qp (13N,12N).
 
     A_qp 블록 k = A_d[k] (A_d[k−1] (… A_d[0]))  (prefix = A_d[k]·prefix)
-    B_qp 블록 (k,j) = A_d[k]·(A_d[k−1]·(…(A_d[j+1]·B_d[j])))  (liftedInput = A_d[k+1]·liftedInput)
+    B_qp 블록 (k,j) = A_d[k]·(A_d[k−1]·(…(A_d[j+1]·B_d[j])))
     대각선 (offset o = k−j) 단위로 배치 곱: L_o[j] = A_d[j+o] @ L_{o−1}[j]  — 같은 곱 순서.
     """
     n = A_d.shape[0]
@@ -264,7 +262,7 @@ def lift(A_d: np.ndarray, B_d: np.ndarray):
 
 
 def yaw_state_cost(Q_diag: np.ndarray, psi_ref: np.ndarray) -> np.ndarray:
-    """bodyYawStateCost (ConvexMPC.cpp:675-685): T = I13, T[3:6,3:6]=T[6:9,6:9]=T[9:12,9:12]=Rz(psi)^T;
+    """yaw 회전 상태 비용: T = I13, T[3:6,3:6]=T[6:9,6:9]=T[9:12,9:12]=Rz(psi)^T;
     Q_k = T^T Q T.  배치 (N,13,13)."""
     n = len(psi_ref)
     R_BW = np.transpose(Rz_batch(psi_ref), (0, 2, 1))
@@ -277,7 +275,7 @@ def yaw_state_cost(Q_diag: np.ndarray, psi_ref: np.ndarray) -> np.ndarray:
 
 
 def foot_constraint_template(cfg) -> np.ndarray:
-    """localFootConstraintTemplateValue (ConvexMPC.cpp:406-437), 12×6, 발 로컬 wrench [Fx,Fy,Fz,Mx,My,Mz]."""
+    """발 접촉 제약 템플릿 12×6, 발 로컬 wrench [Fx,Fy,Fz,Mx,My,Mz]."""
     mu = float(_cfg(cfg, "mpc.friction_coefficient"))
     a = float(_cfg(cfg, "mpc.foot_half_length"))
     b = float(_cfg(cfg, "mpc.foot_half_width"))
@@ -299,7 +297,7 @@ def foot_constraint_template(cfg) -> np.ndarray:
 
 
 def yaw_rotated_block(template: np.ndarray, yaw: float) -> np.ndarray:
-    """yawRotatedFootConstraintValue (ConvexMPC.cpp:439-464) = C_F · blkdiag(Rz(yaw)^T, Rz(yaw)^T)."""
+    """발 yaw 로 회전한 제약 블록 = C_F · blkdiag(Rz(yaw)^T, Rz(yaw)^T)."""
     c, s = np.cos(yaw), np.sin(yaw)
     T = template
     out = np.empty((12, 6))
@@ -313,20 +311,19 @@ def yaw_rotated_block(template: np.ndarray, yaw: float) -> np.ndarray:
 
 
 def resolved_foot_yaw(yaw: float) -> float:
-    """resolvedFootYaw (GaitScheduler.cpp:25-30): NaN → yaw of the stored foot x-axis (기본 UnitX → 0;
-    NoRollMoment 가 아니면 저장된 축은 항상 UnitX)."""
+    """NaN → 발 x축 기본값 (월드 x축) 의 yaw = 0 (full_wrench 에선 항상 이 축)."""
     return float(yaw) if np.isfinite(yaw) else 0.0
 
 
 # ---------------------------------------------------------------------------
-# 고정 sparsity 패턴 (ConvexMPC.cpp:50-64, 128-268)
+# 고정 sparsity 패턴
 # ---------------------------------------------------------------------------
 _C_UNIT_COLS = [[0, 1, 2], [0, 1, 2], [0, 1, 2], [0, 1, 2], [2], [2],
                 [2, 3, 4], [2, 3, 4], [2, 3, 4], [2, 3, 4], [2, 5], [2, 5]]
 
 
 def upper_triangular_pattern(n: int):
-    """makeUpperTriangularPattern: 열 우선, row ≤ col 전부 (명시적 0 포함). → (P csc, rows, cols)."""
+    """상삼각 패턴: 열 우선, row ≤ col 전부 (명시적 0 포함). → (P csc, rows, cols)."""
     cols = np.repeat(np.arange(n), np.arange(1, n + 1))
     rows = np.concatenate([np.arange(c + 1) for c in range(n)])
     indptr = np.concatenate([[0], np.cumsum(np.arange(1, n + 1))])
@@ -335,7 +332,7 @@ def upper_triangular_pattern(n: int):
 
 
 def row_level_constraint_pattern(steps: int):
-    """makeRowLevelConstraintPattern: step 당 C 60 + D 16 = 76 entries. → (A csc, rows, cols) CSC 저장 순서."""
+    """행 단위 고정 제약 패턴: step 당 C 60 + D 16 = 76 entries. → (A csc, rows, cols) CSC 저장 순서."""
     ineq_rows = N_INEQ * steps
     trip = []
     for k in range(steps):
@@ -353,7 +350,7 @@ def row_level_constraint_pattern(steps: int):
         trip += [(d0 + 6, u0 + 6), (d0 + 6, u0 + 7), (d0 + 6, u0 + 8), (d0 + 7, u0 + 7), (d0 + 8, u0 + 8)]
         trip += [(d0 + 9, u0 + 9), (d0 + 9, u0 + 10), (d0 + 9, u0 + 11), (d0 + 10, u0 + 10), (d0 + 11, u0 + 11)]
     trip = np.array(trip, dtype=np.int64)
-    order = np.lexsort((trip[:, 0], trip[:, 1]))        # 열 우선, 열 안에서 행 오름차순 (Eigen compressed)
+    order = np.lexsort((trip[:, 0], trip[:, 1]))        # 열 우선, 열 안에서 행 오름차순 (CSC 순서)
     trip = trip[order]
     rows, cols = trip[:, 0], trip[:, 1]
     nvars = NU * steps
@@ -366,7 +363,7 @@ def row_level_constraint_pattern(steps: int):
 # ---------------------------------------------------------------------------
 # ConvexMPC
 # ---------------------------------------------------------------------------
-_OSQP_OK = (1, 2)      # OSQP_SOLVED, OSQP_SOLVED_INACCURATE  (ConvexMPC.cpp:658-661)
+_OSQP_OK = (1, 2)      # OSQP_SOLVED, OSQP_SOLVED_INACCURATE
 
 
 class MpcSolveError(RuntimeError):
@@ -374,18 +371,18 @@ class MpcSolveError(RuntimeError):
 
 
 class ConvexMPC:
-    """ConvexMPC + MPCFormulation (reference). 한 객체 = 한 OSQP workspace (warm start 상태 유지).
+    """Convex MPC (정식화 + QP 풀이). 한 객체 = 한 OSQP workspace (warm start 상태 유지).
 
     solve(x0, ref, steps, foot_yaw, reduced, mode, active=None) → (u0 (12,), info)
       steps   : 길이 N, 각 항목 .stance (2,) bool, .min_scale (2,) (override 반영된 것, GaitScheduler)
       foot_yaw: (2,) 제약 회전용 발 yaw (mpc_foot_yaw), horizon 전체 공통
       reduced : .mass, .inertia_B (yaw frame, 매 tick 갱신값)
-      mode    : 'walking' | 'standing' (Q/R 선택, ConvexMPC.cpp:808-816)
-      active  : (2,) bool — 실패 시 fallback Fz 를 줄 다리 (activeContactForSide). None → steps[0].stance
+      mode    : 'walking' | 'standing' (Q/R 선택)
+      active  : (2,) bool — 실패 시 fallback Fz 를 줄 다리 (controller._active). None → steps[0].stance
     info: status, status_val, iters, prim_res, dual_res, solve_ms (OSQP setup/update + solve), build_ms,
           total_ms, cold, retry, fallback, sig_changed, U (N,12; fallback 이면 u0 반복), obj, error
-    주의: OSQP (eps 1e-3, max_iter 200) 해는 정확 QP 해와 u0 가 수십 % 다를 수 있다 (목적함수 차는 1e-3 이하) —
-    reference 도 같은 설정이므로 그대로 둔다 (02_unit_checks_C.py §4 참고).
+    주의: OSQP (eps 1e-3, max_iter 200) 해는 정확 QP 해와 u0 가 수십 % 다를 수 있다 (목적함수 차는 1e-3 이하,
+    검증: 저장소 MPC/src/mit/02_unit_checks_C.py 4 번 점검).
     성능: 멀티스레드 BLAS 는 300×325 곱에서 오히려 느려질 수 있다 → OPENBLAS_NUM_THREADS=1 권장.
     """
 
@@ -415,7 +412,7 @@ class ConvexMPC:
         self._du_last, self._du_last_st = None, np.zeros(2, dtype=bool)
         for m in ("walking", "standing"):
             if str(_cfg(cfg, f"mpc.{m}.contact_wrench_model", "full_wrench")) != "full_wrench":
-                # no_roll_moment 는 D 행 6/9 에 발 x축이 들어간다 (ConvexMPC.cpp:554-568) — MIT 는 full_wrench.
+                # no_roll_moment 는 D 행 6/9 에 발 x축이 들어간다 — MIT 는 full_wrench.
                 raise NotImplementedError("contact_wrench_model no_roll_moment not ported (MIT: full_wrench)")
         self.Q_diag = {m: np.asarray(_cfg(cfg, f"mpc.{m}.state_weight_diag"), dtype=float) for m in ("walking", "standing")}
         self.R_diag = {m: np.asarray(_cfg(cfg, f"mpc.{m}.input_weight_diag"), dtype=float) for m in ("walking", "standing")}
@@ -432,8 +429,8 @@ class ConvexMPC:
                              N_INEQ + (A_rows - ineq_rows - N_EQ * k_of_col))
         self._A_gather = (k_of_col * (N_INEQ + N_EQ) + local_row) * NU + local_col
 
-        # 이 폴더 (casadi_mit) 의 기본값 = reference 빌드 실효 설정 (Q&A 9/25 Q11 측정: OSQP 1.0.0 기본
-        # adaptive_rho_interval 50 · check_dualgap 1). mit 폴더 이식의 100 / 0 은 명세의 '0.6.x' 추론값이었다.
+        # 기본값 = OSQP 1.0.0 기본 (Q&A 9/25 Q11 측정:
+        # adaptive_rho_interval 50 · check_dualgap 1).
         # rho 는 넘기지 않는다: 1.1.3 기본 0.1 과 같고, 넘기면 setup 뒤 update_rho 로 KKT 를 한 번 더 분해한다.
         self.settings = dict(verbose=False, warm_starting=True, polishing=False, max_iter=200,
                              adaptive_rho=1, adaptive_rho_interval=50, check_dualgap=1,
@@ -443,7 +440,7 @@ class ConvexMPC:
                              adaptive_rho_fraction=0.4)
         opts = dict(osqp_settings or {})
         # 변형 (Q&A 9/28 Q5): Residual MPC 논문식 풀이 — ρ 고정 · 반복 N 회 고정 · 종료 판정 / 재시도 / fallback 없음
-        # (Jeon et al. T-RO 2026 III-B·C, Alg. 1: N_QP = 25, 초기 추정 = 공칭). 0 = reference 방식 (기본).
+        # (Jeon et al. T-RO 2026 III-B·C, Alg. 1: N_QP = 25, 초기 추정 = 공칭). 0 = 수렴 판정 · 재시도 · fallback 방식 (기본).
         self.fixed_iter = int(opts.pop("fixed_iter", 0) or 0)
         self.fixed_iter_stand = int(opts.pop("fixed_iter_stand", 0) or 0)   # 변형 admms (Q&A 10/1 Q22): 서기 모드 반복 수 (0 = 같음)
         self._iter_now = self.fixed_iter
@@ -478,17 +475,17 @@ class ConvexMPC:
 
     # ------------------------------------------------------------------ build
     def formulate(self, ref: RefOut, reduced):
-        """MPCFormulation::build → (A_qp, B_qp, A_d, B_d)."""
+        """동역학 이산화 + lift → (A_qp, B_qp, A_d, B_d)."""
         A_c, B_c, _ = continuous_matrices(ref.psi, ref.r, reduced.inertia_B, float(reduced.mass))
         A_d, B_d = discretize_zoh(A_c, B_c, self.dt)
         A_qp, B_qp = lift(A_d, B_d)
         return A_qp, B_qp, A_d, B_d
 
     def build_cost(self, A_qp, B_qp, x0, X_ref_flat, mode):
-        """ConvexMPC::buildQP cost part (ConvexMPC.cpp:835-869) → dense H (nv,nv), q (nv,)."""
+        """QP 비용 → dense H (nv,nv), q (nv,)."""
         n = self.N
-        Qk = yaw_state_cost(self.Q_diag[mode], X_ref_flat[2::NX])          # psiRef = X_ref[13k+2]
-        e = A_qp @ x0 - X_ref_flat                                          # _stateError
+        Qk = yaw_state_cost(self.Q_diag[mode], X_ref_flat[2::NX])          # ψ_ref = X_ref[13k+2]
+        e = A_qp @ x0 - X_ref_flat                                          # 상태 오차
         B3 = B_qp.reshape(n, NX, self.nv)
         Wb = (Qk @ B3).reshape(NX * n, self.nv)
         we = (Qk @ e.reshape(n, NX, 1)).reshape(-1)
@@ -515,18 +512,18 @@ class ConvexMPC:
         blk[:, 12:24, RIGHT_MAP] = CWR[None] * sR
         swL = ~stance[:, 0]
         swR = ~stance[:, 1]
-        for i in (0, 1, 2, 6, 7, 8):                      # D: 스윙 발 변수 = 0 (ConvexMPC.cpp:544-575)
+        for i in (0, 1, 2, 6, 7, 8):                      # D: 스윙 발 변수 = 0
             blk[swL, N_INEQ + i, i] = 1.0
         for i in (3, 4, 5, 9, 10, 11):
             blk[swR, N_INEQ + i, i] = 1.0
-        ub_ineq = np.zeros((n, N_INEQ))                   # C_bound (GaitScheduler.cpp:149-180)
+        ub_ineq = np.zeros((n, N_INEQ))                   # C_bound
         ub_ineq[stance[:, 0], 4] = self.fz_max
         ub_ineq[:, 5] = np.where(stance[:, 0], -min_scale[:, 0] * self.fz_min, 0.0)
         ub_ineq[stance[:, 1], 16] = self.fz_max
         ub_ineq[:, 17] = np.where(stance[:, 1], -min_scale[:, 1] * self.fz_min, 0.0)
         l = np.concatenate([np.full(N_INEQ * n, -np.inf), np.zeros(N_EQ * n)])
         u = np.concatenate([ub_ineq.reshape(-1), np.zeros(N_EQ * n)])
-        sig = tuple(int(v) for v in stance.reshape(-1))   # [L0,R0,L1,R1,...] (ConvexMPC.cpp:1071-1084)
+        sig = tuple(int(v) for v in stance.reshape(-1))   # [L0,R0,L1,R1,...]
         return blk, l, u, sig, stance
 
     # ------------------------------------------------------------------ solve
@@ -612,7 +609,7 @@ class ConvexMPC:
             u0 = U[:NU].copy()
             info["U"] = U.reshape(self.N, NU)
             self._du_last, self._du_last_st = u0.copy(), np.asarray(stance0, dtype=bool).copy()
-        except Exception as exc:              # MC:1016-1052 catch (std::exception) → fallback
+        except Exception as exc:              # 풀이 실패 → fallback
             if t_solve is not None:
                 info["solve_ms"] = (time.perf_counter() - t_solve) * 1e3
             self.stats["failures"] += 1
@@ -630,7 +627,7 @@ class ConvexMPC:
         return u0, info
 
     def fallback_wrench(self, active, mass: float) -> np.ndarray:
-        """MC:1030-1051: u = 0; 활성 접촉 다리마다 Fz = m|g| / nStance (index 2 = L, 5 = R), 모멘트 0."""
+        """실패 시 입력: u = 0; 활성 접촉 다리마다 Fz = m|g| / nStance (index 2 = L, 5 = R), 모멘트 0."""
         u0 = np.zeros(NU)
         active = np.asarray(active, dtype=bool)
         n_st = int(active.sum())
@@ -642,9 +639,9 @@ class ConvexMPC:
                 u0[5] = fz
         return u0
 
-    # ---- OSQP (ConvexMPC.cpp:871-1108)
+    # ---- OSQP
     def _init_solver(self, Px, q, Ax, l, u):
-        """initializeSolver: 새 workspace (x = y = 0), 현재 데이터로 setup."""
+        """새 workspace (x = y = 0), 현재 데이터로 setup."""
         self._solver = None
         self._initialized = False
         P = sp.csc_matrix((Px, self.P_pattern.indices, self.P_pattern.indptr), shape=self.P_pattern.shape)
@@ -655,7 +652,7 @@ class ConvexMPC:
         self._initialized = True
 
     def _solve_once(self, use_warm: bool, info):
-        """solveCurrentProblem (ConvexMPC.cpp:915-948). primal 만 warm start (dual y 는 workspace 에 남은 값)."""
+        """현재 데이터로 한 번 푼다. primal 만 warm start (dual y 는 workspace 에 남은 값)."""
         if use_warm and self._has_prev and self._initialized and not self._skip_warm \
                 and np.all(np.isfinite(self._warm)):
             self._solver.warm_start(x=self._warm)
@@ -668,7 +665,7 @@ class ConvexMPC:
         return res
 
     def _solve_osqp(self, Px, q, Ax, l, u, sig, info):
-        # buildQP 후반 (ConvexMPC.cpp:871-906)
+        # 접촉 패턴이 바뀌면 cold setup, 아니면 값만 update
         sig_changed = self._has_sig and sig != self._sig
         cold = (not self._initialized) or sig_changed
         info["sig_changed"] = sig_changed
@@ -685,7 +682,7 @@ class ConvexMPC:
         self._has_sig = True
         self._skip_warm = sig_changed
 
-        # solve (ConvexMPC.cpp:950-993)
+        # solve (실패 시 새 workspace 로 한 번 재시도)
         res = self._solve_once(not self._skip_warm, info)
         if res.info.status_val not in _OSQP_OK:
             first = info["status"]
@@ -707,7 +704,7 @@ class ConvexMPC:
     def _solve_fixed(self, Px, q, Ax, l, u, sig, stance, mass, info):
         """논문식 고정 반복 ADMM (Q&A 9/28 Q5). 패턴이 고정이라 접촉이 바뀌어도 workspace 를 유지하고 값만 갱신한다.
         init: nominal = 디딤 발마다 Fz = m|g| / 디딤 발 수, 나머지 0 (논문 f_init 대응), 쌍대 0
-              warm    = 이전 해를 한 스텝 당긴 값 (쌍대는 workspace 에 남은 값) — reference updateWarmStart
+              warm    = 이전 해를 한 스텝 당긴 값 (쌍대는 workspace 에 남은 값) — _update_warm_start
               hold    = 이전 해 그대로 (당기지 않음). slide 없이는 주기 안에서 격자가 안 움직이고, 주기가 넘어가도
                         다음 주기의 접촉 패턴이 같다 (주기 걸음) — 당기면 20 ms 어긋난다 (Q&A 9/28 Q8)
               zero    = 전부 0
@@ -755,7 +752,7 @@ class ConvexMPC:
         return U
 
     def _update_warm_start(self):
-        """updateWarmStart (ConvexMPC.cpp:1094-1108): 한 step (12) 당겨오고 마지막 step 반복."""
+        """한 step (12) 당겨오고 마지막 step 반복."""
         if not self.use_shifted_warm_start:
             self._warm = self._last_solution.copy()
             return

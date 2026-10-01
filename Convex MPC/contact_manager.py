@@ -1,17 +1,13 @@
 """ContactManager — 명목 스케줄 + 힘 히스테리시스로 "실제로 디딘 발" (active contact) 을 정한다.
 
-ref: My_Controller/src/ContactManager.cpp:1-446, include/MyController/ContactManager.h:12-91,
-     include/MyController/ContactSchedule.h, ControllerConfig.h:109-123 (기본값)
-spec: 05_reference_orchestration_spec.md §6 (전체), 03 §6, 02 §5.4
-
 MIT 값: on 36 N ×1 tick, off 0.5 N ×4 tick, ramp 0.01 s, lock_steps 1, early 켬, late 끔.
-  - activeContact = earlyContact ? True : scheduled   (late 는 cfg 플래그로 꺼져 있음; 코드 경로는 포팅)
-  - 첫 active tick 은 rampTime = 0 → alpha = 0 정확히. 그 뒤 += dt (자체 dt = t - last update).
-  - managed_foot_positions: search / early / liftoffHold 일 때만 commandedFootTarget 으로 교체.
+  - active_contact = early ? True : scheduled   (late 는 cfg 플래그로 꺼져 있음; 코드 경로는 있음)
+  - 첫 active tick 은 ramp_time = 0 → alpha = 0 정확히. 그 뒤 += dt (자체 dt = t - last update).
+  - managed_foot_positions: search / early / liftoff_hold 일 때만 commanded_target_W 로 교체.
   - build_horizon_override: lock_steps 개, stance = active, min_scale = active ? alpha : 0.
 
 state 는 duck typing: state.foot_pos_W (2,3), state.foot_normal_force (2,), state.foot_contact (2,),
-  선택 state.has_contact_force (기본 True — sim 은 항상 힘 신호가 있음, MujocoCheaterStateReader.cpp:363).
+  선택 state.has_contact_force (기본 True — sim 은 항상 힘 신호가 있음).
 leg 순서 0 = Left, 1 = Right.
 """
 from __future__ import annotations
@@ -26,7 +22,7 @@ from gait import LEFT, RIGHT, OverrideStep, _normalize_mode, cfg_get
 class ContactManager:
     def __init__(self, cfg):
         g = lambda k, d: cfg_get(cfg, "contact_manager." + k, d)   # noqa: E731
-        # 기본값: ControllerConfig.h:109-123
+        # 기본값 (yaml 에 키가 없을 때)
         self.on_thr = float(g("contact_force_on_threshold", 20.0))
         self.off_thr = float(g("contact_force_off_threshold", 5.0))
         self.on_confirm = int(g("contact_on_confirm_ticks", 2))
@@ -41,13 +37,13 @@ class ContactManager:
         self.enable_early = bool(g("enable_early_contact_handling", True))
         self.enable_late = bool(g("enable_late_contact_handling", True))
 
-        # public per-leg state (ContactManagerLegState 기본값, ContactManager.h:12-30)
+        # public per-leg state (초기값)
         self.scheduled = np.ones(2, dtype=bool)
         self.estimated = np.ones(2, dtype=bool)
         self.active_contact = np.ones(2, dtype=bool)
         self.early = np.zeros(2, dtype=bool)
         self.late = np.zeros(2, dtype=bool)
-        self.liftoff_hold = np.zeros(2, dtype=bool)       # 코드상 항상 False (CM:289)
+        self.liftoff_hold = np.zeros(2, dtype=bool)       # 코드상 항상 False
         self.search_mode = np.zeros(2, dtype=bool)
         self.recovery_failure = np.zeros(2, dtype=bool)
         self.ramp_alpha = np.ones(2)
@@ -56,7 +52,7 @@ class ContactManager:
         self.normal_force = np.zeros(2)
         self.frozen_touchdown_W = np.zeros((2, 3))
         self.commanded_target_W = np.zeros((2, 3))
-        # private (RuntimeLegState, ContactManager.h:62-76)
+        # private per-leg state
         self.initialized = np.zeros(2, dtype=bool)
         self.raw_estimate = np.ones(2, dtype=bool)
         self.prev_active = np.ones(2, dtype=bool)
@@ -67,7 +63,7 @@ class ContactManager:
         self.off_ticks = [0, 0]
         self.ramp_time = np.zeros(2)
         self.search_depth = np.zeros(2)
-        # _legs 가 아직 없음 (ensureRuntimeLayout 전) → buildHorizonOverride 기본 True/1.0
+        # _ensure_layout 전 → build_horizon_override 기본 True/1.0
         self._layout_ready = False
         self.last_update_time = 0.0
         self.has_last_update_time = False
@@ -75,7 +71,7 @@ class ContactManager:
 
     # ------------------------------------------------------------------
     def _ensure_layout(self) -> None:
-        """ensureRuntimeLayout (CM:36-56): 처음 만들 때만 _hasLastUpdateTime = false."""
+        """처음 불릴 때만 레이아웃 준비 + has_last_update_time = False."""
         if not self._layout_ready:
             self._layout_ready = True
             self.has_last_update_time = False
@@ -88,7 +84,7 @@ class ContactManager:
         return has_force, fn, bit
 
     def _update_estimated(self, leg: int, has_force: bool, fn_raw: float, bit: bool) -> bool:
-        """히스테리시스.  ref: CM:89-148."""
+        """히스테리시스."""
         has_signal = has_force and math.isfinite(fn_raw)
         fn = fn_raw if has_signal else 0.0
         if not self.initialized[leg]:
@@ -132,7 +128,7 @@ class ContactManager:
 
     # ------------------------------------------------------------------
     def reset(self, state, gait, mode, t) -> None:
-        """초기화 / FSM 전이 (Braking 제외) 때.  ref: CM:150-198."""
+        """초기화 / FSM 전이 (Braking 제외) 때."""
         self._ensure_layout()
         mode = _normalize_mode(mode)
         t = float(t)
@@ -171,7 +167,7 @@ class ContactManager:
             self.search_depth[leg] = 0.0
 
     def update(self, state, gait, mode, nominal_desired, t) -> None:
-        """매 tick (spec 05 §2 step 9).  ref: CM:200-359."""
+        """매 tick."""
         self._ensure_layout()
         mode = _normalize_mode(mode)
         t = float(t)
@@ -196,7 +192,7 @@ class ContactManager:
             foot = fpos[leg]
 
             if not self.initialized[leg]:
-                # lazy init (CM:231-243) — reset() 이 먼저 불리므로 실제로는 도달 안 함
+                # lazy init — reset() 이 먼저 불리므로 실제로는 도달 안 함
                 self.initialized[leg] = True
                 self.prev_active[leg] = sched
                 self.prev_scheduled[leg] = sched
@@ -207,7 +203,7 @@ class ContactManager:
                 self.frozen_touchdown_W[leg] = foot if sched else nominal_target
 
             if mode == "standing":
-                # standing short-circuit (CM:245-264)
+                # standing short-circuit
                 self.active_contact[leg] = True
                 self.early[leg] = False
                 self.late[leg] = False
@@ -306,7 +302,7 @@ class ContactManager:
 
     # ------------------------------------------------------------------
     def managed_foot_positions(self, nominal) -> np.ndarray:
-        """search / early / liftoffHold 인 발만 commandedFootTarget 으로 교체.  ref: CM:394-414."""
+        """search / early / liftoff_hold 인 발만 commanded_target_W 로 교체."""
         out = np.array(nominal, dtype=float).reshape(2, 3).copy()
         if not self._layout_ready:
             return out
@@ -317,7 +313,7 @@ class ContactManager:
         return out
 
     def build_horizon_override(self) -> list[OverrideStep]:
-        """step 0..lock_steps-1: stance = active, min_scale = active ? alpha : 0.  ref: CM:416-446."""
+        """step 0..lock_steps-1: stance = active, min_scale = active ? alpha : 0."""
         n = max(self.lock_steps, 0)
         if self._layout_ready:
             stance = np.array([bool(self.active_contact[LEFT]), bool(self.active_contact[RIGHT])])
@@ -327,7 +323,7 @@ class ContactManager:
             scale = np.ones(2)
         return [OverrideStep(enabled=True, stance=stance.copy(), min_scale=scale.copy()) for _ in range(n)]
 
-    # --- 편의 accessor (C++ activeContact(side) 등) ------------------------
+    # --- 편의 accessor ------------------------------------------------
     def active(self, leg: int) -> bool:
         return bool(self.active_contact[leg])
 

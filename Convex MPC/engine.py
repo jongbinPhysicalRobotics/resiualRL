@@ -1,28 +1,18 @@
-"""Convex MPC 엔진 — MPC/src/casadi_mit/10_walk.py 의 복사본 (2026-10-01, 코드 동일 · 이 머리말만 다름).
-발표용 실행은 convex_mpc.py 로 (A30 설정 고정). 아래는 원본 머리말 그대로 — 경로 · 실행 예시는 원본 폴더 기준이다.
+"""Convex MPC 엔진 — MIT 휴머노이드 MuJoCo 걷기 루프 · 헤드리스 판정 · 뷰어.
+실행 진입점은 convex_mpc.py (설정은 mit_controller.yaml).
 
-MIT 휴머노이드 걷기 러너 — CasADi 형식 재작업 폴더 (casadi_mit, Q&A 9/26 Q2·Q3).
+루프: tau = controller.tick()  (현재 MjData, mj_forward 없음) → write_torque (ctrlrange clamp) → mj_step, 2 ms 틱.
+시작: keyframe 'stand' + mj_forward 한 번. 컨트롤러는 t = 0 에 초기화 → StandingSettle 1.0 s → Walking.
 
-mit 폴더와의 차이: MPC 가 mpc_casadi.CasadiCondensedMPC (동역학 기호식 + 자동미분, mit 이식과 1e-11 일치),
-OSQP 기본값 = reference 실효 설정 (rhoint 50 · dualgap 1), 기본 명령 프로파일 = ramp + yawref (안정 구성),
-GAIT_ON (gait.py 파일 값 1, 환경변수 우선): 1 = 걷기, 0 = 제자리 서기 (FSM standing).
-발 모델: 기본 ref (mx 자유) — OA-MPC 선 접촉은 --foot line (아직 검증 전, Q&A 9/26 Q2 §4).
+명령 profile:
+    const : raw 명령이 첫 틱부터 있음
+    step  : raw 명령이 walking 시작 (settle 1.0 s) 부터
+    ramp  : walking 시작부터 2 s 램프 (x = sign·min(|v|, rate (t − t0)); rampT 면 T 초)
+모두 명령 필터 (1 차 저역통과 tau 0.92/0.8/0.70 s, 상한은 yaml user_command_filter) 를 거친다.
 
-
-루프 (07 §2, spec 05 §1.2): tau = controller.tick()  (현재 MjData, mj_forward 없음) → write_torque (ctrlrange clamp)
-→ mj_step.  시작: keyframe 'stand' + mj_forward 한 번 (D2). 컨트롤러는 t = 0 에 초기화 → StandingSettle 1.0 s → Walking.
-
-명령 profile (D3):
-    const (기본) : raw 명령이 첫 틱부터 있음 (reference headless 기본 의미 — filter 첫 호출 snap + walking 시작 틱 dt=0 snap)
-    step         : raw 명령이 walking 시작 (settle 1.0 s) 부터
-    ramp         : walking 시작부터 2 s 램프 (reference 램프 공식 x = sign·min(|v|, rate (t − t0)))
-모두 reference 필터 (tau 0.92/0.8/0.70 s, clamp 0.7/0.5/2.0) 를 거친다.
-
-실행 (ROOT 에서):
-    PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe MPC/src/mit/10_walk.py --vx 0.6 --seconds 120
-    ... --vy 0.3 | --wz 1.3 | --view | --solver quadprog | --noarmature | --profile step|ramp | --log
-    ... --stand (FSM 을 Standing 에 고정: requested_mode standing) | --markers (U1) | --mu 0.8 (마찰 계수 배율)
---seconds = walking 시간 (시뮬 총 시간 = settle 1.0 s + seconds). 넘어짐 = torso z < 0.35 또는 |roll|,|pitch| > 0.8 rad.
+engine.py 를 직접 돌릴 때 GAIT_ON (gait.py 파일 값 0, 환경변수 우선): 1 = 걷기, 0 = 제자리 서기 (FSM standing).
+--seconds = walking 시간 (시뮬 총 시간 = settle 1.0 s + seconds). 넘어짐 = torso z < 0.35 또는 |roll|,|pitch| > 0.8 rad
+(qpos 비유한 값도, 헤드리스에선 tick 예외도 넘어짐으로 친다).
 """
 from __future__ import annotations
 
@@ -99,7 +89,7 @@ def parse_variant(s: str | None) -> dict:
                 kw["osqp_settings"]["eps_rel"] = float(v)
         elif k == "fsm2":
             kw["fsm_double_update"] = bool(int(v))
-        elif k == "fix":                           # reference 특이점 고침 (controller.py fixes): fix=slide+yawref
+        elif k == "fix":                           # 보행 안정화 고침 (controller.py fixes): fix=slide+yawref
             kw["fixes"] = tuple(x for x in v.split("+") if x)
         elif k == "admm":                          # 논문식 고정 반복 ADMM N 회 (ρ 고정, 종료 판정 · 재시도 없음 — Q&A 9/28 Q5)
             kw.setdefault("osqp_settings", {})["fixed_iter"] = int(v)
@@ -111,9 +101,9 @@ def parse_variant(s: str | None) -> dict:
             kw.setdefault("osqp_settings", {})["scaling"] = int(v)
         elif k == "rho":                           # OSQP ρ (기본 0.1)
             kw.setdefault("osqp_settings", {})["rho"] = float(v)
-        elif k == "dualgap":                       # OSQP check_dualgap (이식 0, reference 실효 1 — Q&A 9/25 Q11)
+        elif k == "dualgap":                       # OSQP check_dualgap (기본 1 — Q&A 9/25 Q11)
             kw.setdefault("osqp_settings", {})["check_dualgap"] = int(v)
-        elif k == "xmax":                          # 명령 필터 전진 상한 (reference 0.7) — 1 m/s 시험 (Q&A 9/25 Q9)
+        elif k == "xmax":                          # 명령 필터 전진 상한 (기본 yaml x_dot_max) — 1 m/s 시험 (Q&A 9/25 Q9)
             kw["x_dot_max"] = float(v)
         elif k == "yawtraj":                       # 스윙 발 yaw 를 최소 저크 궤적으로 (스윙 시간 비율, 기본 끔 — Q&A 9/29 Q1)
             kw.setdefault("swing_over", {})["yaw_trajectory_fraction"] = float(v)
@@ -186,7 +176,7 @@ def parse_variant(s: str | None) -> dict:
             kw["ypath"] = float(v)
         elif k == "ypos":                          # 착지 옆 위치 되먹임 k [-] (기본 0 — Q&A 9/27 Q2)
             kw["ypos_gain"] = float(v)
-        elif k == "rai":                           # 착지점 측정 속도 되먹임 K [s] (기본 0 = reference — Q&A 9/26 Q8)
+        elif k == "rai":                           # 착지점 측정 속도 되먹임 K [s] (기본 0 = 끔 — Q&A 9/26 Q8)
             kw["raibert_gain"] = float(v)
         elif k == "sideswap":                      # 걸음 위상 좌우 맞바꿈 (Q&A 9/26 Q7)
             kw["side_swap"] = bool(int(v))
@@ -516,7 +506,7 @@ def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale
             raw["mpc"]["walking"]["state_weight_diag"][i] = float(w)
         if mpc_mu is not None:                    # MPC 마찰 제약 µ 변형 (기본 = yaml 1.0, Q&A 9/26 Q4)
             raw["mpc"]["friction_coefficient"] = float(mpc_mu)
-        if x_dot_max is not None:                 # 명령 필터 전진 상한 변형 (기본 = yaml 0.7)
+        if x_dot_max is not None:                 # 명령 필터 전진 상한 변형 (기본 = yaml x_dot_max)
             raw["user_command_filter"]["x_dot_max"] = float(x_dot_max)
         if k_half is not None:                    # swing.*half_stance_offset 세 값을 하나로 (기본 = 0.37 / 0.28 / 0.26)
             for key in ("body_velocity_half_stance_offset", "mid_speed_body_velocity_half_stance_offset",
@@ -593,7 +583,7 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
     for k in range(n):
         try:
             tau_leg, tau_arm = ctl.tick()
-        except Exception as exc:                  # C++ 에선 runController 밖으로 전파 → 시뮬 중단
+        except Exception as exc:                  # 예외는 시뮬 중단 (넘어짐으로 처리)
             err = f"{type(exc).__name__}: {exc}"
             fell = True
             break
@@ -819,21 +809,21 @@ def main():
     ap.add_argument("--solver", default="osqp", choices=["osqp", "quadprog"])
     ap.add_argument("--noarmature", action="store_true")
     ap.add_argument("--profile", default="ramp", choices=["const", "step", "ramp"])
-    ap.add_argument("--markers", action="store_true", help="U1 debug-marker mass emulation")
+    ap.add_argument("--markers", action="store_true", help="debug-marker mass emulation")
     ap.add_argument("--stand", action="store_true", help="FSM kept in Standing (requested mode standing)")
     ap.add_argument("--mu", type=float, default=1.0, help="friction coefficient scale (variant)")
     ap.add_argument("--fsm1", action="store_true", help="single FSM update per tick (variant)")
     ap.add_argument("--log", action="store_true")
     ap.add_argument("--variant", default=None)
-    ap.add_argument("--fix", default="yawref", help="reference 특이점 고침 (기본 yawref — 빈 문자열로 끔): slide+yawref+yawanchor")
+    ap.add_argument("--fix", default="yawref", help="보행 안정화 고침 (기본 yawref — 빈 문자열로 끔): slide+yawref+yawanchor")
     ap.add_argument("--foot", default="ref", choices=["ref", "line", "mx0"],
-                    help="발 접촉 모델: ref (reference) / mx0 (+ mx=0 등식) / line (OA-MPC 선 접촉)")
-    ap.add_argument("--rai", type=float, default=0.0, help="착지점 측정 속도 되먹임 K [s] (Q&A 9/26 Q8, 기본 0 = reference)")
+                    help="발 접촉 모델: ref (Mx 자유 발) / mx0 (+ mx=0 등식) / line (OA-MPC 선 접촉)")
+    ap.add_argument("--rai", type=float, default=0.0, help="착지점 측정 속도 되먹임 K [s] (Q&A 9/26 Q8, 기본 0 = 끔)")
     ap.add_argument("--ypos", type=float, default=0.0, help="착지점 옆 위치 되먹임 k (Q&A 9/27 Q2, MATLAB 0.3·y_com)")
     ap.add_argument("--ypath", type=float, default=0.0, help="MPC 옆 위치 참조를 경로선 쪽으로 0~1 (Q&A 9/27 Q2)")
     ap.add_argument("--armsw", type=float, default=0.0, help="팔 반대 흔들기 k [rad/m] (Q&A 9/28, 기본 0 = 고정 팔)")
     ap.add_argument("--var", default=None, help="11_gait_quality 와 같은 변형 키 'k=v,k=v' (위 플래그보다 우선). 예: --var yawlead=0,rho=1e-5 · --var rho=1e-5,init=warm,admm=25")
-    ap.add_argument("--xmax", type=float, default=None, help="명령 필터 전진 상한 [m/s] (기본 yaml 0.7)")
+    ap.add_argument("--xmax", type=float, default=None, help="명령 필터 전진 상한 [m/s] (기본 = yaml x_dot_max)")
     a = ap.parse_args()
     import gait as _gait
     if _gait.GAIT_ON == 0 and not a.stand:                    # GAIT_ON=0 → 제자리 서기 (환경변수 우선)

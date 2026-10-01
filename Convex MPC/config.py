@@ -1,4 +1,4 @@
-"""mit_controller.yaml 로더 — 중첩 속성 접근 + 파생값 (07_port_design.md §3.2).
+"""mit_controller.yaml 로더 — 중첩 속성 접근 + 파생값.
 
     import config
     cfg = config.load()                       # 기본: 이 폴더의 mit_controller.yaml
@@ -11,16 +11,15 @@
 규칙
 - 숫자 리스트는 float64 np.ndarray 로 바꾼다 (중첩 리스트 → 2-D 배열, 예: swing.nominal_foot_offsets_B (2,3)).
   빈 리스트 (logging.standing_mpc_debug_trigger_times) 는 빈 배열.
-- 키는 yaml 그대로. 없는 키 접근은 AttributeError (reference 의 기본값을 여기서 흉내내지 않는다 —
-  MIT yaml 은 컨트롤러가 읽는 키를 모두 갖고 있다, spec 05 §11).
-- 파생값 (ref 위치):
-    dt            = port.physics_dt (0.002)                      config/simulation.yaml, SimulationConfig.cpp:96-104
-    dt_mpc        = timing.horizon / timing.horizon_steps (0.02)  ControllerConfig.cpp:645-647
-    N             = timing.horizon_steps (25)                     ControllerConfig.cpp:641-643
-    stance_frac   = timing.stance / timing.cycle (0.66)           GaitScheduler.cpp:118
-    gravity       = model.gravity (-9.81)                         ControllerConfig.cpp:230
-    half_stance_offset(speed): speed > 0.65 → 0.26, speed > 0.60 → 0.28, else 0.37
-                                                                  My_Controller.cpp:35-45 (선택 순서 그대로: high 먼저)
+- 키는 yaml 그대로. 없는 키 접근은 AttributeError (기본값을 여기서 정하지 않는다 —
+  MIT yaml 은 컨트롤러가 읽는 키를 모두 갖고 있다).
+- 파생값:
+    dt            = port.physics_dt (0.002)
+    dt_mpc        = timing.horizon / timing.horizon_steps (0.02)
+    N             = timing.horizon_steps (25)
+    stance_frac   = timing.stance / timing.cycle (0.66)
+    gravity       = model.gravity (-9.81)
+    half_stance_offset(speed): speed > 0.65 → 0.26, speed > 0.60 → 0.28, else 0.37 (high 먼저 판정)
 """
 from __future__ import annotations
 
@@ -107,11 +106,11 @@ class MitConfig(Cfg):
 
     @property
     def iterations_between_solve(self) -> int:
-        # ref: My_Controller.cpp:438  max(iterations_between_solve, 1)
+        # 최소 1
         return max(int(self.mpc.iterations_between_solve), 1)
 
     def half_stance_offset(self, speed: float) -> float:
-        """ref: My_Controller.cpp:35-45 selectedBodyVelocityHalfStanceOffset. speed = |[x_dot, y_dot]|."""
+        """속도 구간별 half stance offset (high 먼저 판정). speed = |[x_dot, y_dot]|."""
         s = self.swing
         if speed > float(s.high_speed_body_velocity_half_stance_offset_switch_speed):
             return float(s.high_speed_body_velocity_half_stance_offset)
@@ -125,7 +124,7 @@ def load(path: str | Path | None = None) -> MitConfig:
     p = Path(path) if path is not None else paths.CONFIG_YAML
     raw = yaml.safe_load(p.read_text(encoding="utf-8"))
     cfg = MitConfig(raw)
-    # 기본 검증 (ref: ControllerConfig.cpp:494 swing+stance == cycle)
+    # 기본 검증 (swing + stance == cycle)
     if abs(float(cfg.timing.swing) + float(cfg.timing.stance) - float(cfg.timing.cycle)) > 1e-9:
         raise ValueError("timing.swing + timing.stance must equal timing.cycle")
     if len(cfg.mpc.walking.state_weight_diag) != 13 or len(cfg.mpc.standing.state_weight_diag) != 13:

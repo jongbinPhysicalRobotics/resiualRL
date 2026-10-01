@@ -1,39 +1,39 @@
 
 """""
-틱 순서 (spec 05 §2; 07 §2 루프: tick() 은 mj_step 이 남긴 d 를 mj_forward 없이 읽는다):
-    state = read_state()                         (SR:409-412: 축소 몸체 + cheater state + yaw unwrap)
-    raw   = schedule(t)                          (SR:413-415)
-    [초기화 틱]  initializeController            (MC:1375-1377)
-    [그 외]      FSM update #1  (prepareController, SR:416)
-     1. FSM update #2 (runController 머리)       (첫 틱엔 이것 하나뿐)
-     2. horizonClock.sync(t)
+틱 순서 (tick() 은 mj_step 이 남긴 d 를 mj_forward 없이 읽는다):
+    state = read_state()                         (축소 몸체 + cheater state + yaw unwrap)
+    raw   = schedule(t)
+    [초기화 틱]  _initialize
+    [그 외]      FSM update #1
+     1. FSM update #2 (컨트롤 루프 머리)         (첫 틱엔 이것 하나뿐)
+     2. clock.sync(t)
      3. x0
-     4. dt = max(0, t - last_control_time)      (첫 틱 / resetSwingState 틱 → 0)
+     4. dt = max(0, t - last_control_time)      (첫 틱 / _reset_swing_state 틱 → 0)
      5. command filter (dt)
      6. body target (x0, dt)
      7. planner.set_body_yaw_target(euler_W[2])
      8. nominal desired feet: standing = 측정 발 (z −0.005) / walking = swing planner
      9. contact manager update
     10. managed foot positions
-    11. swing trajectories (touchdownYaw latch, reset/advance, search 경로; last_control_time = t)
+    11. swing trajectories (touchdown_yaw latch, reset/advance, search 경로; last_control_time = t)
     14. MPC (iteration == 0 또는 7 틱마다) — 풀이는 같은 틱의 다리 명령에 바로 쓰인다
     15. 다리 명령 (walking: stance wrench × alpha + yaw hold / swing OSC + 자세; standing: 6×10 Jacobian)
     17. ++iteration
     arm PD (kp 100, kd 5 → qpos0 + arm_joint_offsets)
-(12, 13, 16 은 디버그 전용이라 생략. U1 마커 흉내는 flag.)
+(12, 13, 16 은 디버그 전용이라 생략. 디버그 마커 흉내는 flag.)
 
-플래그 (기본값 = 충실한 포팅):
+플래그:
     solver           None → cfg.port.solver ("osqp")  | "quadprog"
     requested_mode   None → cfg.requested_locomotion_mode ("walking") | "standing" (서기 bring-up: FSM 이 Standing 에 머묾)
-    emulate_markers  False (U1: reference 씬의 디버그 마커 mocap 질량을 축소 몸체에 흉내; model 이 emulate_debug_markers=True 여야 함)
-    fsm_double_update True (O2 그대로)
+    emulate_markers  False (디버그 마커 mocap 질량을 축소 몸체에 흉내; model 이 emulate_debug_markers=True 여야 함)
+    fsm_double_update True (틱당 FSM update 두 번)
     friction_scale   1.0 (변형: mpc.friction_coefficient 에 곱함 — 기본 아님)
     osqp_settings    None (변형: OSQP 설정 덮어쓰기, 예 {"adaptive_rho_interval": 50})
-    fixes            () — reference 특이점 고침 (변형, 기본 없음 = 충실한 포팅). 9/25 충실한 포팅이 세 목표를 못 넘어서 시험:
-        "slide"      지평 접촉표를 cycle 원점이 아니라 지금부터 (tk = t + k·dt) — O1
-        "half"       지평 접촉표 원점을 반 주기 (한 걸음) 마다 옮김 — O1 의 좌우 비대칭 완화 (Q&A 9/29 Q11)
-        "yawref"     walking 에서 MPC yaw 참조를 측정 yaw 가 아니라 body target yaw (명령 적분) 로 — 방향 유지 (O4)
-        "yawanchor"  swing planner 의 몸 yaw 를 명령 적분 대신 측정 yaw 로 — 흘러간 방향을 따라감 (O4 의 반대 선택)
+    fixes            () — 보행 안정화 고침 (변형, 기본 없음). 9/25 기본 동작이 세 목표를 못 넘어서 시험:
+        "slide"      지평 접촉표를 cycle 원점이 아니라 지금부터 (tk = t + k·dt)
+        "half"       지평 접촉표 원점을 반 주기 (한 걸음) 마다 옮김 — 주기 원점 접촉표의 좌우 비대칭 완화 (Q&A 9/29 Q11)
+        "yawref"     walking 에서 MPC yaw 참조를 측정 yaw 가 아니라 body target yaw (명령 적분) 로 — 방향 유지
+        "yawanchor"  swing planner 의 몸 yaw 를 명령 적분 대신 측정 yaw 로 — 흘러간 방향을 따라감 ("yawref" 의 반대 선택)
 """""
 from __future__ import annotations
 
@@ -61,7 +61,6 @@ LEGS = (LEFT, RIGHT)
 
 @dataclass
 class LegRuntime:
-    """ref: My_Controller.h:52-59 LegRuntimeState."""
     traj: SwingFootTrajectory = field(default_factory=SwingFootTrajectory)
     touchdown_yaw: float = 0.0
     was_in_stance: bool = True
@@ -99,8 +98,8 @@ class MitController:
         self.foot_model = str(foot_model)
         self.raibert_gain = float(raibert_gain)
         self.ypos_gain = float(ypos_gain)            # 착지 옆 위치 되먹임 (9/27 Q2)
-        self.ypath = float(ypath)                    # MPC 참조 옆 위치를 경로선 쪽으로 (0 = reference 재고정, 1 = 경로선) (Q&A 9/27 Q2)
-        self.arm_swing = float(arm_swing)            # 팔 반대 흔들기 k [rad/m] (0 = reference 고정 팔) (Q&A 9/28):
+        self.ypath = float(ypath)                    # MPC 참조 옆 위치를 경로선 쪽으로 (0 = 측정 위치에 재고정, 1 = 경로선) (Q&A 9/27 Q2)
+        self.arm_swing = float(arm_swing)            # 팔 반대 흔들기 k [rad/m] (0 = 팔 고정) (Q&A 9/28):
                                                      # 어깨 pitch = ±k·(x_R − x_L) — 스윙 다리의 수직축 각운동량을 팔이 상쇄
         self.xpath = float(xpath)                    # 변형 (Q&A 9/29 Q4): MPC 참조 앞뒤 위치를 경로선 쪽으로 (뒤처진 만큼, ±5 cm)
         self.lon_err = 0.0
@@ -126,7 +125,7 @@ class MitController:
             cfg.mpc.friction_coefficient = float(cfg.mpc.friction_coefficient) * float(friction_scale)
             self.cfg = cfg
         self.solver_name = str(solver if solver is not None else cfg.port.solver)
-        self.osqp_settings = dict(osqp_settings or {})             # 변형 전용 (기본 = reference 설정, mpc.py)
+        self.osqp_settings = dict(osqp_settings or {})             # 변형 전용 (기본 = mpc.py 설정)
         self.g = cfg.gravity
         self.n_between = cfg.iterations_between_solve
         self.min_remaining = float(cfg.swing.min_remaining_time)
@@ -134,7 +133,7 @@ class MitController:
         self.search_T = float(cfg.contact_manager.ground_search_tracking_time)
         m = model.m
         self.q_arm_des = (m.qpos0[model.arm_qadr] +
-                          np.asarray(cfg.initial_pose.arm_joint_offsets, dtype=float)[None, :])   # ArmPosInitializer end
+                          np.asarray(cfg.initial_pose.arm_joint_offsets, dtype=float)[None, :])   # 팔 초기 자세
         self.emulate_markers = bool(emulate_markers)
         if self.emulate_markers:
             if not model.emulate_debug_markers:
@@ -142,7 +141,7 @@ class MitController:
             self._marker_pose = None
             model.debug_marker_fn = lambda: self._marker_pose
         self.initialized = False
-        # 진단 / 로그 (C++ 에 없음)
+        # 진단 / 로그
         self.last_info = None
         self.solve_log = []          # MPC 틱마다 dict
         self.tick_info = {}
@@ -171,8 +170,8 @@ class MitController:
         self.mode = out.mode
         self.gait.set_mode(self.mode)
         self.cm.reset(state, self.gait, self.mode, t)
-        self.zero_motion = False                                   # _zeroMotionCommand 초기값 (MC:472)
-        self.filtered = self.filter.update(raw, 0.0, self.zero_motion)   # updateFilteredUserCommand(0) (MC:448)
+        self.zero_motion = False                                   # 초기엔 정지 명령 없음
+        self.filtered = self.filter.update(raw, 0.0, self.zero_motion)   # 첫 호출 → filtered = raw
         self.legs = [LegRuntime() for _ in LEGS]
         for rt_ in self.legs:                                  # 변형 swprof (Q&A 9/30 Q2): 저가속 수평 스윙 blend
             rt_.traj.xy_profile = float(cfg_get(self.cfg, "swing.xy_profile_ramp", 0.0) or 0.0)
@@ -181,7 +180,7 @@ class MitController:
             rt.was_in_stance = bool(self.gait.contact(leg, t))
             rt.was_search = False
             rt.touchdown_yaw = self._swing_yaw_target(state) + swing_foot_yaw_psi_offset(leg, self.filtered.psi_dot)
-        self.u_hold = np.zeros(12)                                 # _stanceWrenchWorld
+        self.u_hold = np.zeros(12)                                 # 마지막 MPC 해 (stance wrench, 월드)
         self.last_ref = None
         self.iteration = 0
         self.last_mpc_iteration = 0
@@ -194,7 +193,6 @@ class MitController:
 
     #FSM
     def _reset_swing_state(self, state, t):
-        """ref: MC:534-553."""
         for leg in LEGS:
             rt = self.legs[leg]
             rt.traj.deactivate()
@@ -205,7 +203,7 @@ class MitController:
         self.last_control_time = t
 
     def _sync_fsm(self, state, raw: UserCommand):
-        """syncLocomotionFSM + applyLocomotionOutput (MC:555-604)."""
+        """FSM update + 출력 반영 (모드 · gait clock · 스윙 상태 reset · zero_motion)."""
         t = state.t
         req = int(raw.locomotion_mode_toggle_request)
         while self.last_toggle < req:
@@ -232,19 +230,19 @@ class MitController:
 
     # ------------------------------------------------------------------------------------------------------------
     def _active(self, leg: int, t: float) -> bool:
-        """activeContactForSide (MC:738-746)."""
+        """다리 접촉 여부: walking 은 contact manager, standing 은 gait 접촉표."""
         if self.mode == "walking":
             return bool(self.cm.active_contact[leg])
         return bool(self.gait.contact(leg, t))
 
     def _alpha(self, leg: int) -> float:
-        """contactRampAlphaForSide (MC:748-753)."""
+        """착지 램프 α: walking 은 contact manager, standing 은 1."""
         if self.mode == "walking":
             return float(self.cm.ramp_alpha[leg])
         return 1.0
 
     def _swing_yaw_target(self, state) -> float:
-        """swingFootYawTargetWorld() (MC:891-904) — 측정 yaw + lead·psi_dot·preview."""
+        """스윙 발 yaw 목표 (월드) — 측정 yaw + lead·psi_dot·preview."""
         f = self.filtered
         return swing_foot_yaw_target_world(state.yaw_unwrapped, f.psi_dot, planar_speed(f.x_dot, f.y_dot), self.cfg)
 
@@ -302,7 +300,7 @@ class MitController:
             override = self.cm.build_horizon_override() if self.mode == "walking" else None
             t_tab = t if "slide" in self.fixes else None
             if "half" in self.fixes and t_tab is None:             # 변형 half (Q&A 9/29 Q11): 접촉표 원점을 반 주기 (한 걸음) 마다 옮김
-                half = 0.5 * float(self.clock.cycle)               # — O1 (주기 원점) 은 두 다리의 어긋남이 달라 좌우 비대칭 (9/26 Q7)
+                half = 0.5 * float(self.clock.cycle)               # — 주기 원점 접촉표는 두 다리의 어긋남이 달라 좌우 비대칭 (9/26 Q7)
                 t_tab = self.clock.t0 + (half if t - self.clock.t0 >= half else 0.0)
             steps = self.gait.horizon_steps(self.clock, override, t_now=t_tab)
             seed = x0.copy()
@@ -315,7 +313,7 @@ class MitController:
                 seed[0] = self.body.euler_W[0]
                 seed[1] = self.body.euler_W[1]
                 seed[5] = self.body.nominal_height_W - dz
-                if "yawref" in self.fixes:                         # 변형: 방향 유지 (reference 는 x0 yaw)
+                if "yawref" in self.fixes:                         # 변형: 방향 유지 (기본은 x0 yaw)
                     seed[2] = self.body.euler_W[2]
                 if self.xpath > 0.0:                               # 변형: 앞뒤 위치 참조를 경로선 쪽으로 (Q&A 9/29 Q4)
                     psi_t = float(self.body.euler_W[2])
@@ -329,7 +327,7 @@ class MitController:
             ref = build_reference(self.filtered.copy(), seed, desired, self.clock, self.cfg)
             if "foot2" in self.fixes and self.mode == "walking":      # 변형: 지평 안 두 번째 착지 (Q&A 9/28 Q10)
                 foot_yaw = self._second_footholds(ref, steps, foot_yaw)
-            self.last_ref = ref                                # 뷰어 오버레이용 (10_walk._draw_refs)
+            self.last_ref = ref                                # 뷰어 오버레이용 (engine._draw_refs)
             red = state.reduced
             ms = float(cfg_get(self.cfg, "mpc.srb_mass_scale", 1.0) or 1.0)   # 변형 srbm (Q&A 9/29 Q7): MPC 질량만 배율
             if ms != 1.0:
@@ -346,9 +344,9 @@ class MitController:
             info["stance0"] = np.asarray(steps[0].stance, dtype=bool).copy()
             info["stance_tab"] = np.array([s.stance for s in steps], dtype=bool)
             info["foot_yaw"] = foot_yaw
-        except Exception as exc:                                   # MC:1016-1052 (setup 단계 예외 포함)
+        except Exception as exc:                                   # 풀이 실패 → fallback wrench (setup 단계 예외 포함)
             if self.verbose:
-                print(f"[MPC] maybeUpdateMpc failed at iteration {self.iteration}, t={t:.3f}: {exc}")
+                print(f"[MPC] solve failed at iteration {self.iteration}, t={t:.3f}: {exc}")
             u0 = self.mpc.fallback_wrench(active, float(state.reduced.mass))
             info = dict(status="exception", fallback=True, cold=False, solve_ms=np.nan, total_ms=np.nan,
                         iters=0, error=str(exc), x_ref0=np.full(13, np.nan), stance0=active.copy())
@@ -391,7 +389,7 @@ class MitController:
             _pm.K_SCHED_Y = k0 + (float(ky_l) - k0) * min(1.0, abs(float(f.y_dot)) / 0.5) * (1.0 - turn)
 
     def _yaw_hold_gains(self):
-        """변형 shw (Q&A 9/30 Q10): 회전 명령 |ψ̇| 에 따라 hold 이득을 reference (20 / 4) 쪽으로. 꺼져 있으면 None (yaml 이득)."""
+        """변형 shw (Q&A 9/30 Q10): 회전 명령 |ψ̇| 에 따라 hold 이득을 20 / 4 쪽으로. 꺼져 있으면 None (yaml 이득)."""
         cfg = self.cfg
         w_fade = float(cfg_get(cfg, "swing.stance_yaw_fade_rate", 0.0) or 0.0)
         if w_fade <= 0.0:
@@ -430,7 +428,7 @@ class MitController:
     def _swing_yaw_ref(self, rt, t):
         """변형 yawtraj (Q&A 9/29 Q1): 착지 yaw 를 한 번에 목표로 주는 대신 최소 저크 곡선으로 보간.
         s = (t − t_lo)/T_yaw ∈ [0,1], ψ_des = ψ_lo + Δ·(10s³ − 15s⁴ + 6s⁵), ψ̇_des = Δ·(30s² − 60s³ + 30s⁴)/T_yaw,
-        Δ = wrap(ψ_td − ψ_lo). 꺼져 있으면 (None, 0) → reference (목표 = ψ_td, 속도 목표 0)."""
+        Δ = wrap(ψ_td − ψ_lo). 꺼져 있으면 (None, 0) → 기본 (목표 = ψ_td, 속도 목표 0)."""
         if not cfg_get(self.cfg, "swing.yaw_trajectory_fraction", None) or not np.isfinite(rt.yaw_lo):
             return None, 0.0
         s = min(max((float(t) - rt.t_lo) / rt.T_yaw, 0.0), 1.0)
@@ -438,11 +436,11 @@ class MitController:
         dpsi = (rt.touchdown_yaw - rt.yaw_lo + np.pi) % (2.0 * np.pi) - np.pi
         yaw_des = rt.yaw_lo + dpsi * (10 * s**3 - 15 * s**4 + 6 * s**5)
         if not ff:
-            return yaw_des, None                    # None → 속도항은 reference 그대로 (다리 상대 속도 감쇠)
+            return yaw_des, None                    # None → 속도항은 기본 그대로 (다리 상대 속도 감쇠)
         return yaw_des, (dpsi * (30 * s**2 - 60 * s**3 + 30 * s**4) / rt.T_yaw if s < 1.0 else 0.0)
 
     def _second_footholds(self, ref, steps, foot_yaw):
-        """변형 'foot2' (Q&A 9/28 Q10): reference 는 다리당 발 위치 하나를 지평 전체에 쓴다 (RT:65-66).
+        """변형 'foot2' (Q&A 9/28 Q10): 기본은 다리당 발 위치 하나를 지평 전체에 쓴다.
         지평 (0.5 s) = 한 주기라 디딤 발은 지평 안에서 들렸다가 다시 착지하는데, 그 입각도 지금 위치 (몸 뒤) 로 계산된다.
         각 다리의 입각 구간을 세어 두 번째 이후 구간에 착지점 규칙으로 예측한 위치 · yaw 를 넣는다:
           이륙 스텝 k_lo 의 참조 CoM p, yaw ψ 에서  p + Rz(ψ + ½ψ̇Tp)·v_B·Tp + Rz(ψ + ψ̇·T_sw)·off_B   (planner.touchdown_target 와 같은 식,
@@ -482,7 +480,7 @@ class MitController:
         return yaw_tab
 
     # ------------------------------------------------------------------------------------------------------------
-    # 다리 명령 (MC:1254-1372)
+    # 다리 명령
     # ------------------------------------------------------------------------------------------------------------
     def _leg_commands(self, state, t) -> np.ndarray:
         cfg = self.cfg
@@ -502,7 +500,7 @@ class MitController:
             # 서기 수정 (Q6) 은 '서기가 요청된' 경우만 — 걷기 전 1 s StandingSettle 에는 안 건다 (Q&A 9/27 Q1:
             # 걸면 걷기 시작 자세가 바뀌어 경계에 있는 0.6 m/s 가 20 s 에 전도)
             stand_fix = self.requested_mode == "standing"
-            if self.stand_yaw_hold and stand_fix:      # 걷기의 stance yaw hold (7.6) 를 서기에도 (Q&A 9/26 Q6)
+            if self.stand_yaw_hold and stand_fix:      # 걷기의 stance yaw hold 를 서기에도 (Q&A 9/26 Q6)
                 u_st = np.asarray(u_st, dtype=float).copy()
                 Jw_a = np.asarray(Jw)
                 for leg, col, sl in ((LEFT, 8, slice(0, 5)), (RIGHT, 11, slice(5, 10))):
@@ -520,7 +518,7 @@ class MitController:
             if self._active(leg, t):
                 gains = None
                 w_fade = float(cfg_get(cfg, "swing.stance_yaw_fade_rate", 0.0) or 0.0)   # 변형 shw (Q&A 9/30 Q10):
-                if w_fade > 0.0:                                   # 회전 명령 |ψ̇| 이 클수록 yaw hold 이득을 reference 값 (20 / 4) 쪽으로
+                if w_fade > 0.0:                                   # 회전 명령 |ψ̇| 이 클수록 yaw hold 이득을 20 / 4 쪽으로
                     f_ = max(0.0, 1.0 - abs(float(self.filtered.psi_dot)) / w_fade)
                     kp_s = float(cfg_get(cfg, "swing.stance_yaw_kp", 20.0))
                     kd_s = float(cfg_get(cfg, "swing.stance_yaw_kd", 4.0))
@@ -567,10 +565,10 @@ class MitController:
         raw = self.schedule(t)
         self.raw = raw
         if not self.initialized:
-            self._initialize(state, raw)                           # prepareController 는 init 전이면 no-op
+            self._initialize(state, raw)                           # 초기화 틱엔 FSM update #1 없음
         elif self.fsm_double_update:
-            self._sync_fsm(state, raw)                             # FSM update #1 (prepareController, SR:416)
-        # ---- runController (MC:1374-1429)
+            self._sync_fsm(state, raw)                             # FSM update #1
+        # ---- 컨트롤 루프 (1 ~ 17)
         self._sync_fsm(state, raw)                                 # 1
         self.clock.sync(t)                                         # 2
         x0 = state.x0(self.g)                                      # 3
@@ -626,9 +624,9 @@ class MitController:
             for leg, sgn in ((RIGHT, 1.0), (LEFT, -1.0)):          # 어깨 pitch + = 팔 뒤로 (축 +y)
                 q_arm_des[leg, 0] += sgn * float(np.clip(self.arm_swing * dx, -0.6, 0.6))
                 qd_arm_des[leg, 0] = sgn * self.arm_swing * dxd
-        tau_arm = arm_pd(state, q_arm_des, cfg, qd_arm_des)       # RobotRunner arm PD (RR:113-117)
+        tau_arm = arm_pd(state, q_arm_des, cfg, qd_arm_des)       # 팔 PD
 
-        if self.emulate_markers:                                   # SR:440 updateDebugVisualization (다음 틱에 반영)
+        if self.emulate_markers:                                   # 디버그 마커 자세 갱신 (다음 틱에 반영)
             q_torso = state.torso_quat_W.copy()
             self._marker_pose = {
                 "debug_reduced_body_com": (x0[3:6].copy(), q_torso),
