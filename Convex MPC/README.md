@@ -1,7 +1,8 @@
 # Convex MPC — MIT Humanoid (MuJoCo)
 
 Di Carlo 식 SRB convex MPC 에 OA-MPC 선 접촉 발 제약을 더한 보행 제어기입니다. 로봇은 MIT Humanoid (MuJoCo) 입니다.
-설정은 **A30** (2026-10-01 발표 설정, Q&A 9/30 Q23) 으로 고정되어 있어서 **속도 명령과 gait (걷기 / 서기) 만** 고르면 됩니다.
+설정은 **A30** (2026-10-01 발표 설정, Q&A 9/30 Q23) 이고, 숫자는 전부 [mit_controller.yaml](mit_controller.yaml) 에 있습니다.
+실행할 때는 **속도 명령과 gait (걷기 / 서기) 만** 고르면 됩니다.
 
 이 폴더는 복사해서 다른 곳에 두어도 그대로 돌아갑니다. 로봇 모델 (`models/mit_humanoid/`) 과 설정 파일이 모두 폴더 안에 있습니다.
 코드는 [MPC/src/casadi_mit](../MPC/src/casadi_mit/) 의 복사본이고, 디버깅과 실험은 원본 폴더에서 합니다.
@@ -56,8 +57,8 @@ python3 -m venv .venv
 | `--headless` | — | 뷰어 없이 실행하고 PASS / FAIL 과 지표를 출력합니다 (종료 코드 0 = PASS) |
 | `--clean` | — | 뷰어의 참조 표시 끄기 |
 | `--yawlead` | 0.5 | 회전 선행 0 / 0.5 / 1 |
-| `--push` | — | 스크립트 외란 `Fx:Fy:t0:dur` [N, N, s, s]. 진행 방향 기준이고, 걷기 시작 (서기면 0 s) 뒤 t0 에 몸통 CoM 에 가합니다. 예: `--push 0:40:5:0.2` |
-| `--var` | — | 고급 옵션입니다. A30 위에 변형 키를 덮어씁니다 (`k=v,k=v`, 문법은 `engine.parse_variant`) |
+| `--push` | — | 스크립트 외란 `Fx:Fy:t0:dur` [N, N, s, s]. 진행 방향 기준이고, 걷기 시작 (서기면 0 s) 뒤 t0 에 몸통 CoM 에 가합니다. 예: `--push 0:40:5:0.2`. 음수로 시작하면 `=` 로 붙여 씁니다: `--push=-30:0:5:0.2` |
+| `--var` | — | 고급 옵션입니다. yaml 위에 변형 키를 덮어씁니다 (`k=v,k=v`, 문법은 `engine.parse_variant`) |
 
 명령 상한은 전진 · 후진 1.0 m/s, 옆 1.0 m/s, 회전 2.5 rad/s 입니다. 이보다 큰 명령은 명령 필터가 잘라냅니다.
 
@@ -69,7 +70,9 @@ python3 -m venv .venv
   MPC 해를 이 집합으로 한 번 더 잘라서 실제로 가하는 힘은 걷기 · 서기 모두 제약을 정확히 지킵니다.
 - **걸음**: 주기 0.55 s, 스윙 0.22 s 이고, 착지점은 capture point 식 (k_half 0.41, 명령에 따라 0.35 ~ 0.47) 입니다.
 - 저수준: 스윙 다리 임피던스, 딛는 발 yaw hold (관절 되먹임), 팔 반대 흔들기.
-- A30 의 변형 키 전체는 [convex_mpc.py](convex_mpc.py) 의 `A30` 문자열에 있습니다. 키마다의 설명은 [원본 README](../MPC/src/casadi_mit/README.md) 를 보세요.
+- A30 의 숫자는 전부 [mit_controller.yaml](mit_controller.yaml) 에 있습니다. reference 값에서 바꾼 줄에는 `# A30 <키> (원래 값)` 주석이 달려 있습니다.
+  yaml 설정 경로가 없는 값 (profile · fix · foot · Raibert 이득 · ypath · 팔 흔들기 · OSQP 반복 수 · ρ · warm start) 은 맨 아래 `launcher:` 절에 있고, [convex_mpc.py](convex_mpc.py) 가 읽어서 넘깁니다.
+  원본 폴더 (casadi_mit) 는 같은 값을 `--var` 문자열로 덮어씁니다. 원본 yaml 에는 reference 값이 그대로 있습니다.
 
 ## 시험 결과와 알려진 한계 (A30, 120 s, 측정 — Q&A 9/30 Q22 · Q23)
 
@@ -88,20 +91,32 @@ A30 은 A29 에서 앞발 벌림만 끈 설정입니다. 벌림은 회전 명령
 
 - 회전할 때 무릎이 가까워집니다 (무릎 중심 간격 최소 약 7.5 cm, 정강이 반지름 3.5 cm).
   예전에 쓰던 앞발 벌림 (`psioff`) 을 일부러 껐습니다. residual RL 이 무릎 충돌을 없애는지를 관찰 포인트로 남기기 위해서입니다.
-- 이 폴더의 결과가 원본과 같은지 확인했습니다 (측정, 2026-10-01).
-  전진 1.0, 제자리 2.5, 옆 0.8, 서기를 12 s 씩 돌렸을 때 상태 · 토크 · 힘 기록이 원본 [10_walk.py](../MPC/src/casadi_mit/10_walk.py) 와 비트 단위로 같았습니다.
+- 이 폴더의 결과가 원본과 같은지 확인했습니다 (측정, 2026-10-01, 설정을 yaml 로 옮긴 뒤 다시 확인).
+  전진 1.0, 제자리 2.5, 옆 0.8, 서기, 제자리 2.5 `--yawlead 1`, 0.6 + 1.0 `--var admm=50` 을 12 s 씩 돌렸을 때,
+  상태 · 토크 · 힘 기록이 원본 [10_walk.py](../MPC/src/casadi_mit/10_walk.py) (A30 `--var` 문자열) 와 비트 단위로 같았습니다.
   다른 것은 풀이 시간 (벽시계) 뿐이었습니다. 폴더를 저장소 밖으로 복사해서 돌렸을 때도 같았습니다.
+
+### 발표 명령 확인 (측정, 2026-10-01)
+
+| 명령 | 결과 | 실측 | slip [mm/걸음] |
+|---|---|---|---|
+| `--vx 0.3` · `0.7` · `1.0` | 120 s 완주 | 0.29 · 0.69 · 1.00 m/s | 4.0 · 9.6 · 18.9 |
+| `--vy 0.3` · `0.5` | 120 s 완주 | 0.30 · 0.50 m/s | 2.1 · 7.4 |
+| `--wz 0.5` · `1.5` · `2.5` | 120 s 완주 | 0.50 · 1.50 · 2.50 rad/s | 2.5 · 3.6 · 6.6 |
+| `--vx 0.6 --wz 1.0` | 120 s 완주 | 0.59 m/s · 1.00 rad/s | 10.4 |
+| `--gait stand` + 앞 · 뒤 · 왼 · 오른 30 N (0.2 s) | 4 / 4 버팀 | — | — |
+| `--vx 0.5` + 옆 ±40 N (0.2 s) | 2 / 2 버팀 | — | — |
 
 ## 파일
 
 | 파일 | 역할 |
 |---|---|
-| `convex_mpc.py` | 실행기 (A30 고정, 속도 · gait 만 받음) |
+| `convex_mpc.py` | 실행기 (속도 · gait 만 받음, yaml 의 `launcher:` 절을 읽음) |
 | `engine.py` | 시뮬 루프, 뷰어, 헤드리스 판정, 변형 키 해석 (원본 `10_walk.py`) |
 | `controller.py` | 컨트롤러 한 틱 (FSM → 걸음 계획 → MPC → 다리 토크) |
 | `mpc.py`, `mpc_casadi.py` | SRB condensed MPC (CasADi 로 식 생성, OSQP 로 풀이), 선 접촉 제약 |
 | `planner.py`, `gait.py`, `contact_manager.py`, `fsm.py`, `command.py` | 착지점 · 스윙 궤적, 걸음 시간표, 접촉 관리, 상태기계, 명령 필터 |
 | `leg_control.py`, `mit_model.py` | 다리 토크 (스윙 임피던스 · 힘→토크 · yaw hold · 해 자르기), MuJoCo 모델 래퍼 |
-| `mit_controller.yaml`, `config.py` | 기본 설정 (A30 은 실행기에서 이 위에 덮어씀) |
+| `mit_controller.yaml`, `config.py` | **A30 설정 전부** (바꾼 줄마다 원래 값 주석) 와 로더 |
 | `viewer_hud.py`, `paths.py` | 뷰어 HUD, 폴더 안 경로 |
 | `models/mit_humanoid/` | 로봇 모델 (scene.xml, mit_humanoid.xml, meshes_v3). 출처 · 라이선스는 그 안의 README 와 LICENSE_source |
