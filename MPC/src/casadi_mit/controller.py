@@ -161,6 +161,7 @@ class MitController:
         _planner_mod.K_SCHED_Y = None
         self.mpc = CasadiCondensedMPC(cfg, solver=self.solver_name, osqp_settings=self.osqp_settings or None,
                                       verbose_errors=self.verbose, foot_model=self.foot_model)
+        self.mpc.total_mass = float(self.model.total_mass())        # 변형 frefm (Q&A 10/6 Q5)
         tr = cfg.locomotion_transition
         self.fsm = LocomotionFSM(self.requested_mode, cfg.startup.post_init_standing_settle_time,
                                  tr.braking_settle_speed_threshold, tr.braking_settle_yaw_rate_threshold,

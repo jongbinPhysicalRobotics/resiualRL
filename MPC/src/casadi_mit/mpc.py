@@ -404,6 +404,9 @@ class ConvexMPC:
         self.fz_max = float(_cfg(cfg, "mpc.normal_force_max"))
         self.fz_min = float(_cfg(cfg, "mpc.normal_force_min"))
         self.force_ref_w = float(_cfg(cfg, "mpc.force_ref_weight", 0.0) or 0.0)   # 변형 fref (기본 0)
+        # 변형 frefm (Q&A 10/6 Q5, 기본 0): fref 참조 질량을 전신으로 — 모델 질량 (상체 14.2 kg) 은 그대로, 비용 참조만 m_전신·|g|/n
+        self.force_ref_total = bool(int(float(_cfg(cfg, "mpc.force_ref_total_mass", 0) or 0)))
+        self.total_mass = None                     # 컨트롤러가 채움 (frefm 용)
         # 변형 wdu (Q&A 9/30 Q12, 기본 0): 입력 변화 비용 가중치 w — 힘 w, 모멘트 w/l² (두 점 힘으로 쟀을 때 같은 크기, l = 발 반길이)
         self.du_w = float(_cfg(cfg, "mpc.input_rate_weight", 0.0) or 0.0)
         self.hold_w = float(_cfg(cfg, "mpc.hold_in_mpc_weight", 0.0) or 0.0)   # 변형 hmpc (Q&A 9/30 Q14, 기본 0)
@@ -552,7 +555,8 @@ class ConvexMPC:
             if self.force_ref_w > 0.0:                    # 변형 fref (Q&A 9/29 Q5): w·(Fz − m|g|/n)² — Residual MPC 논문식 힘 참조
                 st = np.asarray(stance, dtype=bool).reshape(self.N, 2)
                 n_st = np.maximum(st.sum(1), 1)
-                fz_ref = float(reduced.mass) * abs(self.gravity) / n_st
+                m_ref = self.total_mass if (self.force_ref_total and self.total_mass) else float(reduced.mass)
+                fz_ref = m_ref * abs(self.gravity) / n_st
                 H = H.copy(); q = q.copy()
                 for k in range(self.N):
                     for leg, iz in ((0, 2), (1, 5)):
