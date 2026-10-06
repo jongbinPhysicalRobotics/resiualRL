@@ -128,7 +128,7 @@ def parse_variant(s: str | None) -> dict:
             kw["stand_yaw_hold"] = bool(int(v))
         elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
             kw["arm_swing"] = float(v)
-        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm", "zoff", "rsc", "fzmax"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
+        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm", "zoff", "rsc", "fzmax", "mdt", "wsh"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
             path = {"tdz": "swing.touchdown_z", "fref": "mpc.force_ref_weight", "tswing": "timing.swing",
                     "tcycle": "timing.cycle", "hor": "timing.horizon", "kdz": "swing.kd_zeta",
                     "raii": "swing.raibert_int_gain", "psioff": "swing.psi_offset_scale",
@@ -162,6 +162,8 @@ def parse_variant(s: str | None) -> dict:
                     "zoff": "mpc.height_ref_offset",            # zoff=m: MPC 높이 참조를 처음 자세 + m (서기 · 걷기, Q&A 10/6 Q6)
                     "rsc": "mpc.walking_input_scale",           # rsc=s: 걷기 입력 가중치 12 개 전부 × s (wf · wmom 뒤에 곱함, Q&A 10/6 Q6)
                     "fzmax": "mpc.normal_force_max",            # fzmax=N: MPC 발 수직력 상한 (기본 yaml 500, 9/26 Q5 — Q&A 10/6 Q7)
+                    "mdt": "timing.mpc_dt",                     # mdt=s: MPC 한 칸 길이 (기본 0.02, 칸 수 = 지평 / mdt — Q&A 10/6 Q9)
+                    "wsh": "mpc.warm_shift_steps",              # wsh=s: warm start 를 s 칸 당김 (기본 1, 0.5 = 재풀이 10 ms 에 맞춤 — Q&A 10/6 Q9)
                     "attank": "swing.attitude_ankle_only",    # attank=1: 스윙 발 pitch 자세 모멘트를 발목에만 (Q&A 10/6 Q3)
                     "swq": "swing.blend_order"}[k]             # swq=5: 스윙 궤적 5 차 최소 저크 (기본 3 차 smoothstep)
             kw.setdefault("raw_over", {})[path] = float(v)
@@ -507,8 +509,8 @@ def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale
             raw["mpc"]["walking"]["input_weight_diag"] = [float(w) * s_ for w in raw["mpc"]["walking"]["input_weight_diag"]]
         if raw_over and ("timing.swing" in raw_over or "timing.cycle" in raw_over):   # 입각 = 주기 − 스윙
             raw["timing"]["stance"] = float(raw["timing"]["cycle"]) - float(raw["timing"]["swing"])
-        if raw_over and "timing.horizon" in raw_over:   # 스텝 간격 20 ms 유지
-            raw["timing"]["horizon_steps"] = int(round(float(raw["timing"]["horizon"]) / 0.02))
+        if raw_over and ("timing.horizon" in raw_over or "timing.mpc_dt" in raw_over):   # 스텝 간격 20 ms 유지 (mdt 를 주면 그 값)
+            raw["timing"]["horizon_steps"] = int(round(float(raw["timing"]["horizon"]) / float(raw_over.get("timing.mpc_dt", 0.02))))
         for k_, v_ in (swing_over or {}).items():  # 스윙 설정 덮어쓰기 (yawtraj · yawkp · yawkd) — Q&A 9/29 Q1
             raw["swing"][k_] = v_
         if k_half_y is not None:                  # 옆 방향 k_half — Q&A 9/28 Q12

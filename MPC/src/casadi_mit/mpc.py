@@ -401,6 +401,8 @@ class ConvexMPC:
         self.nc = (N_INEQ + N_EQ) * self.N
         self.gravity = float(_cfg(cfg, "model.gravity", -9.81))
         self.use_shifted_warm_start = bool(_cfg(cfg, "mpc.use_shifted_warm_start", True))
+        # 변형 wsh (Q&A 10/6 Q9, 기본 1): warm start 를 몇 칸 당길지 — 1 = 한 칸 (20 ms), 0.5 = 반 칸 (재풀이 간격 10 ms 에 맞춤, 이웃 칸 선형 보간)
+        self.warm_shift = float(_cfg(cfg, "mpc.warm_shift_steps", 1.0))
         self.fz_max = float(_cfg(cfg, "mpc.normal_force_max"))
         self.fz_min = float(_cfg(cfg, "mpc.normal_force_min"))
         self.force_ref_w = float(_cfg(cfg, "mpc.force_ref_weight", 0.0) or 0.0)   # 변형 fref (기본 0)
@@ -766,6 +768,9 @@ class ConvexMPC:
         w = np.empty(self.nv)
         w[:self.nv - NU] = self._last_solution[NU:]
         w[self.nv - NU:] = self._last_solution[self.nv - NU:]
+        if self.warm_shift != 1.0:                       # 변형 wsh: (1 − s)·지난 해 + s·한 칸 당긴 해
+            s_ = self.warm_shift
+            w = (1.0 - s_) * self._last_solution + s_ * w
         self._warm = w
 
     # ---- quadprog (비교용 정확 QP)
