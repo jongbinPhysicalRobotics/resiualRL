@@ -411,6 +411,8 @@ class ConvexMPC:
         self.total_mass = None                     # 컨트롤러가 채움 (frefm 용)
         # 변형 wdu (Q&A 9/30 Q12, 기본 0): 입력 변화 비용 가중치 w — 힘 w, 모멘트 w/l² (두 점 힘으로 쟀을 때 같은 크기, l = 발 반길이)
         self.du_w = float(_cfg(cfg, "mpc.input_rate_weight", 0.0) or 0.0)
+        # 변형 wdum (Q&A 10/6 Q17): 0 = 두 갈래 다 (기존 wdu), 1 = k = 0 만 (첫 칸 정칙화 ‖u₀ − u_prev‖², Khazoom 식), 2 = k ≥ 1 만
+        self.du_mode = int(float(_cfg(cfg, "mpc.input_rate_mode", 0) or 0))
         self.hold_w = float(_cfg(cfg, "mpc.hold_in_mpc_weight", 0.0) or 0.0)   # 변형 hmpc (Q&A 9/30 Q14, 기본 0)
         self.var_scale = bool(int(float(_cfg(cfg, "mpc.moment_variable_scale", 0) or 0)))   # 변형 msc (Q&A 9/30 Q16)
         self._msc12 = np.array([1.0] * 6 + [float(_cfg(cfg, "mpc.foot_half_length"))] * 6)
@@ -586,11 +588,11 @@ class ConvexMPC:
                     for leg, cols in ((0, self._DU_COLS[0]), (1, self._DU_COLS[1])):
                         i = k * NU + cols
                         if k == 0:
-                            if self._du_last is None or not (st[0, leg] and self._du_last_st[leg]):
+                            if self.du_mode == 2 or self._du_last is None or not (st[0, leg] and self._du_last_st[leg]):
                                 continue
                             H[i, i] += 2.0 * self._du_s
                             q[i] -= 2.0 * self._du_s * self._du_last[cols]
-                        elif st[k, leg] and st[k - 1, leg]:
+                        elif self.du_mode != 1 and st[k, leg] and st[k - 1, leg]:
                             j = i - NU
                             H[i, i] += 2.0 * self._du_s; H[j, j] += 2.0 * self._du_s
                             H[i, j] -= 2.0 * self._du_s; H[j, i] -= 2.0 * self._du_s
