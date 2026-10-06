@@ -309,6 +309,7 @@ class MitController:
             steps = self.gait.horizon_steps(self.clock, override, t_now=t_tab)
             seed = x0.copy()
             dz = self.wb_dz or 0.0                                 # 변형 wbcom: 전신 CoM 은 몸통 CoM 보다 dz 낮다
+            dz -= float(cfg_get(self.cfg, "mpc.height_ref_offset", 0.0) or 0.0)   # 변형 zoff (Q&A 10/6 Q6): 높이 참조 + zoff [m]
             if self.mode == "standing":
                 seed[0:3] = self.body.euler_W
                 seed[3:6] = self.body.nominal_position_W

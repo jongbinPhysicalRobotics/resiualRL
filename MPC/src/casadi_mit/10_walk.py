@@ -128,7 +128,7 @@ def parse_variant(s: str | None) -> dict:
             kw["stand_yaw_hold"] = bool(int(v))
         elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
             kw["arm_swing"] = float(v)
-        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
+        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm", "zoff", "rsc"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
             path = {"tdz": "swing.touchdown_z", "fref": "mpc.force_ref_weight", "tswing": "timing.swing",
                     "tcycle": "timing.cycle", "hor": "timing.horizon", "kdz": "swing.kd_zeta",
                     "raii": "swing.raibert_int_gain", "psioff": "swing.psi_offset_scale",
@@ -159,6 +159,8 @@ def parse_variant(s: str | None) -> dict:
                     "cmarw": "mpc.cop_margin_frac_walk",        # cmarw=ε: 걷기 전용 두 점 최소 하중 (서기는 cmar, Q&A 10/1 Q21)
                     "lprojs": "mpc.line_wrench_projection_stand",   # lprojs=1: 서기에서도 MPC 해 자르기 (Q&A 10/1 Q22)
                     "frefm": "mpc.force_ref_total_mass",        # frefm=1: fref 참조를 전신 무게 / 발 수로 (Q&A 10/6 Q5)
+                    "zoff": "mpc.height_ref_offset",            # zoff=m: MPC 높이 참조를 처음 자세 + m (서기 · 걷기, Q&A 10/6 Q6)
+                    "rsc": "mpc.walking_input_scale",           # rsc=s: 걷기 입력 가중치 12 개 전부 × s (wf · wmom 뒤에 곱함, Q&A 10/6 Q6)
                     "attank": "swing.attitude_ankle_only",    # attank=1: 스윙 발 pitch 자세 모멘트를 발목에만 (Q&A 10/6 Q3)
                     "swq": "swing.blend_order"}[k]             # swq=5: 스윙 궤적 5 차 최소 저크 (기본 3 차 smoothstep)
             kw.setdefault("raw_over", {})[path] = float(v)
@@ -198,8 +200,9 @@ def parse_variant(s: str | None) -> dict:
             kw["cop_half"] = float(v)
         elif k == "wmom":                          # MPC 걷기 입력 가중치 중 발 모멘트 6 개 (기본 yaml 1e-3 — Q&A 9/28)
             kw["w_moment"] = float(v)
-        elif k in ("qpitch", "qyaw", "qroll", "qvx", "qvy"):   # MPC 걷기 상태 가중치 (기본 yaml roll 50000 / pitch 9000 / yaw 500 / vx 100 / vy 70)
-            kw.setdefault("q_state", {})[{"qroll": 0, "qpitch": 1, "qyaw": 2, "qvx": 9, "qvy": 10}[k]] = float(v)
+        elif k in ("qpitch", "qyaw", "qroll", "qvx", "qvy", "qpx", "qpy", "qz", "qvz"):   # MPC 걷기 상태 가중치 (기본 yaml roll 50000 / pitch 9000 / yaw 500 / vx 100 / vy 70)
+            kw.setdefault("q_state", {})[{"qroll": 0, "qpitch": 1, "qyaw": 2, "qvx": 9, "qvy": 10,   # qpx · qpy · qz · qvz: Q&A 10/6 Q6
+                                          "qpx": 3, "qpy": 4, "qz": 5, "qvz": 11}[k]] = float(v)
         elif k == "cone":                          # 시뮬 마찰 원뿔: pyramidal (MuJoCo 기본, 마름모) / elliptic (원) — Q&A 9/28 Q6
             kw["sim_cone"] = str(v)
         elif k == "yawhold":                       # 걷기 디딤 발 yaw hold (MPC 밖 Mz, 기본 yaml 1) — Q&A 9/28 Q6
@@ -498,6 +501,9 @@ def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale
         for path_, v_ in (raw_over or {}).items():  # 일반 설정 덮어쓰기 (tdz · fref · tswing · tcycle · hor · kdz) — Q&A 9/29 Q5
             sec, key = path_.split(".")
             raw[sec][key] = v_
+        if raw_over and "mpc.walking_input_scale" in raw_over:   # 변형 rsc (Q&A 10/6 Q6)
+            s_ = float(raw_over["mpc.walking_input_scale"])
+            raw["mpc"]["walking"]["input_weight_diag"] = [float(w) * s_ for w in raw["mpc"]["walking"]["input_weight_diag"]]
         if raw_over and ("timing.swing" in raw_over or "timing.cycle" in raw_over):   # 입각 = 주기 − 스윙
             raw["timing"]["stance"] = float(raw["timing"]["cycle"]) - float(raw["timing"]["swing"])
         if raw_over and "timing.horizon" in raw_over:   # 스텝 간격 20 ms 유지
