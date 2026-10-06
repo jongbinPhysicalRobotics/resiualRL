@@ -128,7 +128,7 @@ def parse_variant(s: str | None) -> dict:
             kw["stand_yaw_hold"] = bool(int(v))
         elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
             kw["arm_swing"] = float(v)
-        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm", "zoff", "rsc"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
+        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm", "zoff", "rsc", "fzmax"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
             path = {"tdz": "swing.touchdown_z", "fref": "mpc.force_ref_weight", "tswing": "timing.swing",
                     "tcycle": "timing.cycle", "hor": "timing.horizon", "kdz": "swing.kd_zeta",
                     "raii": "swing.raibert_int_gain", "psioff": "swing.psi_offset_scale",
@@ -161,6 +161,7 @@ def parse_variant(s: str | None) -> dict:
                     "frefm": "mpc.force_ref_total_mass",        # frefm=1: fref 참조를 전신 무게 / 발 수로 (Q&A 10/6 Q5)
                     "zoff": "mpc.height_ref_offset",            # zoff=m: MPC 높이 참조를 처음 자세 + m (서기 · 걷기, Q&A 10/6 Q6)
                     "rsc": "mpc.walking_input_scale",           # rsc=s: 걷기 입력 가중치 12 개 전부 × s (wf · wmom 뒤에 곱함, Q&A 10/6 Q6)
+                    "fzmax": "mpc.normal_force_max",            # fzmax=N: MPC 발 수직력 상한 (기본 yaml 500, 9/26 Q5 — Q&A 10/6 Q7)
                     "attank": "swing.attitude_ankle_only",    # attank=1: 스윙 발 pitch 자세 모멘트를 발목에만 (Q&A 10/6 Q3)
                     "swq": "swing.blend_order"}[k]             # swq=5: 스윙 궤적 5 차 최소 저크 (기본 3 차 smoothstep)
             kw.setdefault("raw_over", {})[path] = float(v)
