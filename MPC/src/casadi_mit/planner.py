@@ -608,6 +608,17 @@ def _blend_ddot(s: float) -> float:
     return 6.0 - 12.0 * s
 
 
+def _blend3(s: float):
+    """3 차 smoothstep (b, b', b'') — 양 끝 속도 0, 가속 ±6 (기본)."""
+    return _blend(s), _blend_dot(s), _blend_ddot(s)
+
+
+def _blend5(s: float):
+    """변형 swq=5 (Q&A 10/6 Q3): 5 차 (최소 저크) b = 10s³ − 15s⁴ + 6s⁵ — 양 끝 속도 · 가속 0, 최대 가속 5.77 (s = 0.21)."""
+    s2 = s * s
+    return (s2 * s * (10.0 - 15.0 * s + 6.0 * s2), 30.0 * s2 * (1.0 - 2.0 * s + s2), 60.0 * s * (1.0 - 3.0 * s + 2.0 * s2))
+
+
 _PROFILE_CACHE = {}
 
 
@@ -659,6 +670,7 @@ class SwingFootTrajectory:
         self.remaining = 0.0
         self.active = False
         self.xy_profile = 0.0                      # 변형 swprof: 0 = cubic smoothstep (reference), r > 0 = 저가속 blend
+        self.blend_order = 3                       # 변형 swq (Q&A 10/6 Q3): 3 = cubic smoothstep (기본), 5 = 5 차 최소 저크
 
     def reset(self, p_init, p_final, height: float, T: float) -> None:
         """ref: :6-21."""
@@ -724,7 +736,7 @@ class SwingFootTrajectory:
             sg, B, Bd, Bdd = _jerk_limited_profile(self.xy_profile)
             b, bd, bdd = float(np.interp(s, sg, B)), float(np.interp(s, sg, Bd)), float(np.interp(s, sg, Bdd))
         else:
-            b, bd, bdd = _blend(s), _blend_dot(s), _blend_ddot(s)
+            b, bd, bdd = _blend5(s) if self.blend_order == 5 else (_blend(s), _blend_dot(s), _blend_ddot(s))
         pi0, pi1, pi2 = float(self.p_init[0]), float(self.p_init[1]), float(self.p_init[2])
         pf0, pf1, pf2 = float(self.p_final[0]), float(self.p_final[1]), float(self.p_final[2])
         d0, d1 = pf0 - pi0, pf1 - pi1
@@ -738,12 +750,12 @@ class SwingFootTrajectory:
         du = 2.0 * ds
         if s <= 0.5:
             u = 2.0 * s
-            bz, bzd, bzdd = _blend(u), _blend_dot(u), _blend_ddot(u)
+            bz, bzd, bzdd = _blend5(u) if self.blend_order == 5 else (_blend(u), _blend_dot(u), _blend_ddot(u))
             dz = z_mid - pi2
             pz = (1.0 - bz) * pi2 + bz * z_mid
         else:
             u = 2.0 * s - 1.0
-            bz, bzd, bzdd = _blend(u), _blend_dot(u), _blend_ddot(u)
+            bz, bzd, bzdd = _blend5(u) if self.blend_order == 5 else (_blend(u), _blend_dot(u), _blend_ddot(u))
             dz = pf2 - z_mid
             pz = (1.0 - bz) * z_mid + bz * pf2
         vz = bzd * dz * du

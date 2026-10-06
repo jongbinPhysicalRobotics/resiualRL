@@ -240,9 +240,16 @@ def swing_attitude_torque(state, leg: int, dyn, touchdown_yaw: float, cfg, yaw_d
     if roll_on:
         e = np.arctan2(fx.dot(np.cross(fz, _EZ)), fz.dot(_EZ))
         moment += (rkp * e - rkd * fx.dot(omega)) * fx
+    ankle_tau = None
     if pitch_on:
         e = np.arctan2(fy.dot(np.cross(fz, _EZ)), fz.dot(_EZ))
-        moment += (pkp * e - pkd * fy.dot(omega)) * fy
+        m_pitch = (pkp * e - pkd * fy.dot(omega)) * fy
+        if int(_cfg(cfg, "swing.attitude_ankle_only", 0) or 0):
+            # 변형 attank (Q&A 10/6 Q3): 발 pitch 자세 모멘트를 발목 관절에만 (Jwᵀ 로 보내면 축이 평행한
+            # hip pitch · knee · ankle 세 관절에 같은 크기로 걸려 hip pitch 를 포화시켰다 — 10/6 Q2)
+            ankle_tau = float(Jw[:, dof - 1].dot(m_pitch))
+        else:
+            moment += m_pitch
     if yaw_on:
         proj = fx - fx.dot(_EZ) * _EZ
         nrm = np.linalg.norm(proj)
@@ -255,7 +262,10 @@ def swing_attitude_torque(state, leg: int, dyn, touchdown_yaw: float, cfg, yaw_d
         # ω 는 다리 관절에 의한 (몸통 기준) 회전 → 목표 월드 yaw 속도에서 몸통 yaw 속도를 뺀 값과 비교
         rate_ref = 0.0 if (yaw_des is None or yaw_rate_des is None) else float(yaw_rate_des) - float(torso_wz)
         moment += (ykp * e - ykd * (_EZ.dot(omega) - rate_ref)) * _EZ
-    return Jw.T @ moment
+    tau = Jw.T @ moment
+    if ankle_tau is not None:
+        tau[dof - 1] += ankle_tau
+    return tau
 
 
 def swing_torque(dyn, state, leg: int, p_des, v_des, a_des, touchdown_yaw: float, cfg,
