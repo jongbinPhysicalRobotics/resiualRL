@@ -204,7 +204,7 @@ def swing_kp(dyn, cfg) -> np.ndarray:
 
 
 def swing_attitude_torque(state, leg: int, dyn, touchdown_yaw: float, cfg, yaw_des=None, yaw_rate_des: float = 0.0,
-                          torso_wz: float = 0.0) -> np.ndarray:
+                          torso_wz: float = 0.0, pitch_bias: float = 0.0, pitch_rate_ref: float = 0.0) -> np.ndarray:
     """computeSwingAttitudeLevelTorque (SwingAttitudeControl.h:9-84).
 
     x̂,ŷ,ẑ = 정규화한 발 SITE 축 (R_WF 열), ω = Jw q̇_leg (torso 제외), up = e_z
@@ -243,7 +243,8 @@ def swing_attitude_torque(state, leg: int, dyn, touchdown_yaw: float, cfg, yaw_d
     ankle_tau = None
     if pitch_on:
         e = np.arctan2(fy.dot(np.cross(fz, _EZ)), fz.dot(_EZ))
-        m_pitch = (pkp * e - pkd * fy.dot(omega)) * fy
+        # 변형 pitchtraj (Q&A 10/6 Q28): 보정각 목표 pitch_bias · 각속도 목표 pitch_rate_ref (기본 0 → 기존식)
+        m_pitch = (pkp * (e - pitch_bias) - pkd * (fy.dot(omega) - pitch_rate_ref)) * fy
         if int(_cfg(cfg, "swing.attitude_ankle_only", 0) or 0):
             # 변형 attank (Q&A 10/6 Q3): 발 pitch 자세 모멘트를 발목 관절에만 (Jwᵀ 로 보내면 축이 평행한
             # hip pitch · knee · ankle 세 관절에 같은 크기로 걸려 hip pitch 를 포화시켰다 — 10/6 Q2)
@@ -269,7 +270,8 @@ def swing_attitude_torque(state, leg: int, dyn, touchdown_yaw: float, cfg, yaw_d
 
 
 def swing_torque(dyn, state, leg: int, p_des, v_des, a_des, touchdown_yaw: float, cfg,
-                 yaw_des=None, yaw_rate_des: float = 0.0, torso_wz: float = 0.0) -> np.ndarray:
+                 yaw_des=None, yaw_rate_des: float = 0.0, torso_wz: float = 0.0,
+                 pitch_bias: float = 0.0, pitch_rate_ref: float = 0.0) -> np.ndarray:
     """SwingFoot 모드 (LegController.cpp:262-291 → OperationalSpaceDynamics.cpp:61-84) + 자세 토크 (MC:1361).
 
     F_fb = 0 (forceFeedForward) + Kp (p_des − p) + Kd (v_des − v)     p, v = 발 SITE 위치/속도 (state, world)
@@ -288,7 +290,8 @@ def swing_torque(dyn, state, leg: int, p_des, v_des, a_des, touchdown_yaw: float
     a_res = np.asarray(a_des, dtype=float) - np.asarray(dyn.JvDot_qd, dtype=float)
     lam = apparent_inertia(Jv, dyn.M)
     tau = Jv.T @ f_fb + Jv.T @ (lam @ a_res) + np.asarray(dyn.bias, dtype=float)
-    return tau + swing_attitude_torque(state, leg, dyn, touchdown_yaw, cfg, yaw_des, yaw_rate_des, torso_wz)
+    return tau + swing_attitude_torque(state, leg, dyn, touchdown_yaw, cfg, yaw_des, yaw_rate_des, torso_wz,
+                                       pitch_bias, pitch_rate_ref)
 
 
 def limit_swing_torque(tau_des, dyn, lo, hi, mode: int, w_att: float = 0.01, eps: float = 1e-4) -> np.ndarray:
