@@ -296,6 +296,19 @@ class MitController:
 
 
     # MPC
+    def _tag_stance_fraction(self, steps, t, t_tab, n_lock):
+        """변형 toeoff (Q&A 10/6 Q30): 칸마다 디딤 경과 비율 s ∈ [0, 1] 을 steps[k].stance_frac (2,) 에 붙인다.
+        접촉표와 같은 시각을 쓴다 — override 칸 (지금 접촉) 은 지금 t, 나머지는 표의 tk.
+        스케줄상 스윙인데 딛고 있으면: 스윙 후반 = 일찍 착지 → 0, 스윙 전반 = 늦은 이륙 → 1."""
+        cyc, st_T, sw_T = float(self.clock.cycle), float(self.gait.stance), float(self.gait.swing)
+        for k, s in enumerate(steps):
+            tk = t if k < n_lock else (self.clock.tk(k) if t_tab is None else float(t_tab) + k * float(self.clock.dt_mpc))
+            fr = np.zeros(2)
+            for leg in LEGS:
+                p = self.gait.phase(leg, tk, self.clock) * cyc            # 주기 안 시각 [s], 디딤 [0, st_T)
+                fr[leg] = p / st_T if p < st_T else (0.0 if p >= st_T + 0.5 * sw_T else 1.0)
+            s.stance_frac = fr
+
     def _maybe_update_mpc(self, state, x0, desired, t):
         if not (self.iteration == 0 or (self.iteration - self.last_mpc_iteration) >= self.n_between):
             return None
@@ -310,6 +323,8 @@ class MitController:
                 half = 0.5 * float(self.clock.cycle)               # — O1 (주기 원점) 은 두 다리의 어긋남이 달라 좌우 비대칭 (9/26 Q7)
                 t_tab = self.clock.t0 + (half if t - self.clock.t0 >= half else 0.0)
             steps = self.gait.horizon_steps(self.clock, override, t_now=t_tab)
+            if self.mode == "walking" and cfg_get(self.cfg, "mpc.toe_off_fraction", None):
+                self._tag_stance_fraction(steps, t, t_tab, len(override) if override else 0)
             seed = x0.copy()
             dz = self.wb_dz or 0.0                                 # 변형 wbcom: 전신 CoM 은 몸통 CoM 보다 dz 낮다
             dz -= float(cfg_get(self.cfg, "mpc.height_ref_offset", 0.0) or 0.0)   # 변형 zoff (Q&A 10/6 Q6): 높이 참조 + zoff [m]
@@ -554,8 +569,10 @@ class MitController:
                 lp_mode = int(float(cfg_get(cfg, "mpc.line_wrench_projection", 0) or 0))   # 1 투영 · 2 자르기
                 if self.foot_model == "line" and lp_mode:
                     fy_ = np.asarray((self.last_info or {}).get("foot_yaw", [np.nan, np.nan]), dtype=float).reshape(-1, 2)[0]
-                    lp = (getattr(self.mpc, "template_walk", self.mpc.template), float(cfg_get(cfg, "mpc.foot_half_length")),
-                          resolved_foot_yaw(fy_[leg]), lp_mode)
+                    tmpl = getattr(self.mpc, "template_walk", self.mpc.template)
+                    if bool(getattr(self.mpc, "late0", np.zeros(2, dtype=bool))[leg]):   # 변형 toeoff: 첫 칸이 풀린 다리
+                        tmpl = self.mpc.template_toe
+                    lp = (tmpl, float(cfg_get(cfg, "mpc.foot_half_length")), resolved_foot_yaw(fy_[leg]), lp_mode)
                 u_use = self.u_hold
                 if float(cfg_get(cfg, "mpc.input_interpolation", 0) or 0) and getattr(self, "_u_next", None) is not None:
                     # 변형 uint (Q&A 9/30 Q13): 풀이 사이 (10 ms) 에 u0 → u1 (다음 MPC 스텝) 로 선형 보간 — 계단 명령을 없앤다.

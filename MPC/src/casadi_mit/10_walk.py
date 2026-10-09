@@ -128,7 +128,7 @@ def parse_variant(s: str | None) -> dict:
             kw["stand_yaw_hold"] = bool(int(v))
         elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
             kw["arm_swing"] = float(v)
-        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm", "zoff", "rsc", "fzmax", "mdt", "wsh", "wdum", "pitchtraj"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
+        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm", "zoff", "rsc", "fzmax", "mdt", "wsh", "wdum", "pitchtraj", "toeoff", "toeeps", "toepin"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
             path = {"tdz": "swing.touchdown_z", "fref": "mpc.force_ref_weight", "tswing": "timing.swing",
                     "tcycle": "timing.cycle", "hor": "timing.horizon", "kdz": "swing.kd_zeta",
                     "raii": "swing.raibert_int_gain", "psioff": "swing.psi_offset_scale",
@@ -166,6 +166,9 @@ def parse_variant(s: str | None) -> dict:
                     "wsh": "mpc.warm_shift_steps",              # wsh=s: warm start 를 s 칸 당김 (기본 1, 0.5 = 재풀이 10 ms 에 맞춤 — Q&A 10/6 Q9)
                     "wdum": "mpc.input_rate_mode",              # wdum=1: wdu 를 첫 칸 (직전 적용값에 묶기) 만, 2: 지평 안 이웃 칸 차이만 (Q&A 10/6 Q17)
                     "pitchtraj": "swing.pitch_trajectory_fraction",   # pitchtraj=f: 스윙 발 pitch 를 이륙 기울기 → 수평으로 스윙의 f 동안 (Q&A 10/6 Q28)
+                    "toeoff": "mpc.toe_off_fraction",           # toeoff=f: 디딤 경과 f 이후 칸은 뒤꿈치 최소 하중을 풀어 CoP 를 발끝까지 (Q&A 10/6 Q30)
+                    "toeeps": "mpc.toe_off_margin",             # toeeps=ε: 그 칸의 발끝 쪽 CoP 한계 (1 − 2ε)·l (기본 0 = 발끝 끝)
+                    "toepin": "mpc.toe_off_pin",                # toepin=c: 그 칸의 CoP 를 발끝 쪽 [c·l, (1 − 2ε)·l] 에 묶음 (기본 없음 = 풀기만)
                     "attank": "swing.attitude_ankle_only",    # attank=1: 스윙 발 pitch 자세 모멘트를 발목에만 (Q&A 10/6 Q3)
                     "swq": "swing.blend_order"}[k]             # swq=5: 스윙 궤적 5 차 최소 저크 (기본 3 차 smoothstep)
             kw.setdefault("raw_over", {})[path] = float(v)

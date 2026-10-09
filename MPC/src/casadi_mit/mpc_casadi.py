@@ -191,6 +191,21 @@ class CasadiCondensedMPC(ConvexMPC):
         if foot_model == "line" and m_w is not None:
             self.template_walk = line_foot_template(cfg, margin=float(m_w))
             self._rot_fn_walk = build_rot_function(self.template_walk)
+        # 변형 toeoff (Q&A 10/6 Q30, 기본 끔): 걷기에서 디딤 경과 ≥ f 인 칸은 행 7 (발끝 쪽 CoP = 뒤꿈치 최소 하중) 만
+        # (1 − 2ε_toe)·l 로 푼다 (ε_toe 기본 0 → 뒤꿈치 하중 0 까지, CoP 발끝 끝). 칸별 경과는 steps[k].stance_frac (controller).
+        self.toe_off_frac = float(_cfg(cfg, "mpc.toe_off_fraction", 0.0) or 0.0)
+        self.late0 = np.zeros(2, dtype=bool)                 # 첫 칸이 풀린 다리 — controller 의 lproj 투영도 template_toe 로
+        if foot_model == "line" and self.toe_off_frac > 0.0:
+            self.template_toe = self.template_walk.copy()
+            self.template_toe[7] = line_foot_template(cfg, margin=float(_cfg(cfg, "mpc.toe_off_margin", 0.0) or 0.0))[7]
+            # toepin=c (기본 없음 = 풀기만): 행 6 도 바꿔 CoP 를 발끝 쪽 [c·l, (1 − 2ε_toe)·l] 에 묶는다 (my ≤ −c·l·Fz)
+            # — 발목 한계로 뒤꿈치가 뜨는 디딤 후반을 접촉표에 '발끝 접촉' 으로 적는 것 (Q&A 10/6 Q30)
+            pin = _cfg(cfg, "mpc.toe_off_pin", None)
+            self._toe_rows = (7,)
+            if pin is not None:
+                self.template_toe[6] = [0.0, 0.0, float(pin) * float(_cfg(cfg, "mpc.foot_half_length")), 0.0, 1.0, 0.0]
+                self._toe_rows = (6, 7)
+            self._rot_fn_toe = build_rot_function(self.template_toe)
 
     # ------------------------------------------------------------------ 공식 (기호식)
     def formulate(self, ref, reduced):
@@ -244,6 +259,17 @@ class CasadiCondensedMPC(ConvexMPC):
         sR = stance[:, 1].astype(float)[:, None, None]
         blk[:, 0:12, LEFT_MAP] = CWL * sL
         blk[:, 12:24, RIGHT_MAP] = CWR * sR
+        late = np.zeros((n, 2), dtype=bool)
+        if (self.foot_model == "line" and self.toe_off_frac > 0.0 and getattr(self, "_mode_now", None) == "walking"
+                and getattr(steps[0], "stance_frac", None) is not None):   # 변형 toeoff: 디딤 후반 칸의 행 7 교체
+            frac = np.array([np.asarray(s.stance_frac, dtype=float) for s in steps]).reshape(n, 2)
+            late = stance & (frac >= self.toe_off_frac)
+            for side, yaws, off, cmap in ((0, yawL, 0, LEFT_MAP), (1, yawR, 12, RIGHT_MAP)):
+                for k in np.flatnonzero(late[:, side]):
+                    cw = np.array(self._rot_fn_toe(yaws[k]))
+                    for r_ in self._toe_rows:
+                        blk[k, off + r_, cmap] = cw[r_]
+        self.late0 = late[0].copy()
         swL = ~stance[:, 0]
         swR = ~stance[:, 1]
         for i in (0, 1, 2, 6, 7, 8):                        # D: 스윙 발 변수 = 0
@@ -265,6 +291,7 @@ class CasadiCondensedMPC(ConvexMPC):
                 rhs = np.where(stance[:, side], -self._cop_span * min_scale[:, side] * self.point_fmin, 0.0)
                 ub_ineq[:, off + self._cop_rows[0]] = rhs
                 ub_ineq[:, off + self._cop_rows[1]] = rhs
+                ub_ineq[late[:, side], off + 7] = 0.0                 # 변형 toeoff: 풀린 칸은 뒤꿈치 최소 하중 없음
         l = np.concatenate([np.full(N_INEQ * n, -np.inf), np.zeros(N_EQ * n)])
         u = np.concatenate([ub_ineq.reshape(-1), np.zeros(N_EQ * n)])
         sig = tuple(int(v) for v in stance.reshape(-1))

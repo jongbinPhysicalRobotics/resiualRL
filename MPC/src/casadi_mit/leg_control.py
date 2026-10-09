@@ -96,8 +96,9 @@ def project_line_wrench(F_g, M_g, yaw: float, C, l: float, mode: int = 1):
         x[0] = np.clip(x[0], -mu * x[2], mu * x[2])
         x[1] = np.clip(x[1], -mu * x[2], mu * x[2])
         x[3] = 0.0
-        lc = -float(np.asarray(C)[6, 2])                     # CoP 행의 계수 (cmar 가 있으면 (1 − 2ε)·l)
-        x[4] = np.clip(x[4], -lc * x[2], lc * x[2])
+        # CoP 행 6 (my ≤ c₆·l·Fz) · 7 (−my ≤ c₇·l·Fz) 의 계수 (cmar 가 있으면 (1 − 2ε)·l). 대칭 템플릿이면 전과 같음,
+        # 변형 toeoff (Q&A 10/6 Q30) 의 template_toe 는 행 7 만 풀려 있다.
+        x[4] = np.clip(x[4], float(np.asarray(C)[7, 2]) * x[2], -float(np.asarray(C)[6, 2]) * x[2])
         lo = max(-mu * (l * x[2] - x[4]) - l * x[1], l * x[1] - mu * (l * x[2] + x[4]))
         hi = min(mu * (l * x[2] - x[4]) - l * x[1], l * x[1] + mu * (l * x[2] + x[4]))
         x[5] = np.clip(x[5], lo, hi)
