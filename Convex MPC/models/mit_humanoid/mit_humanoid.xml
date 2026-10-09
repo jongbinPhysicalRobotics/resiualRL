@@ -27,7 +27,9 @@
   <worldbody>
     <body name="base" pos="0 0 0.7483">
       <freejoint name="floating_base"/>
-      <inertial pos="0.009896 0.004771 0.100522" quat="0.997833 -0.0602088 -0.0251512 0.0084686" mass="8.52" diaginertia="0.172925 0.106132 0.0914963"/>
+      <!-- 10/9 (Q&A 10/6 Q42): 몸통 좌우 대칭화 — CoM y 0.004771 → 0, ixy 0.001419 · iyz −0.001672 → 0 (질량 · ixx/iyy/izz · ixz 는 URDF 그대로).
+           원래: pos="0.009896 0.004771 0.100522" quat="0.997833 -0.0602088 -0.0251512 0.0084686" diaginertia="0.172925 0.106132 0.0914963" -->
+      <inertial pos="0.009896 0 0.100522" mass="8.52" fullinertia="0.172699 0.105949 0.091906 0 0.004023 0"/>
       <geom pos="-0.00565 0 -0.05735" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.752941 0.752941 0.752941 1" density="0" mesh="torso"/>
       <geom group="3" size="0.075 0.15 0.175" pos="0.023 0 0.08" type="box" rgba="0.752941 0.752941 0.752941 1"/>
       <body name="right_hip_yaw" pos="-0.00565 -0.082 -0.05735" quat="0.996195 0 -0.0871558 0">
@@ -61,7 +63,9 @@
         </body>
       </body>
       <body name="left_hip_yaw" pos="-0.00565 0.082 -0.05735" quat="0.996195 0 -0.0871558 0">
-        <inertial pos="-0.064842 -3.6e-05 -0.06309" quat="0.949273 0.000254156 -0.314444 0.00239733" mass="0.84563" diaginertia="0.00195239 0.00142519 0.000787713"/>
+        <!-- 10/9 (Q&A 10/6 Q42): URDF 313 줄 ixz 부호 오류 (+0.0005578) → 오른 hip_yaw 의 거울상 (ixz −0.0005578). quat (w,x,y,z) → (w,−x,y,−z), 대각 같음.
+             원래: quat="0.949273 0.000254156 -0.314444 0.00239733" diaginertia="0.00195239 0.00142519 0.000787713" -->
+        <inertial pos="-0.064842 -3.6e-05 -0.06309" quat="0.949274 0.00175833 0.314444 -0.00113226" mass="0.84563" diaginertia="0.00195239 0.00142521 0.000787705"/>
         <joint name="a06_left_hip_yaw" armature="0.01188" range="-1 1" actuatorfrcrange="-34 34"/>
         <geom pos="0 0 0" quat="1 0 0 0" type="mesh" contype="0" conaffinity="0" group="1" rgba="0.1 0.1 0.1 1" density="0" mesh="left_hip_yaw1"/>
         <body name="left_hip_abad" pos="-0.06435 0 -0.07499" quat="0.976296 0 0.216439 0">

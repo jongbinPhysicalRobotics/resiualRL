@@ -188,6 +188,7 @@ def parse_variant(s: str | None) -> dict:
         elif k == "syminert":                      # 변형 (Q&A 10/6 Q40): 몸통 관성의 좌우 비대칭 곱 관성 ixy · iyz 만 0 (질량 · 대각 · ixz 그대로)
             kw["sym_inertia"] = bool(int(v))
         elif k == "hipfix":                        # 변형 (Q&A 10/6 Q41): 왼 hip_yaw 관성을 오른쪽의 거울상으로 (URDF ixz 부호 오류, 질량 · CoM 그대로)
+            # ※ 10/9 (Q42) 부터 모델 파일 자체를 고쳐서 symcom · syminert · hipfix 는 효과가 없다 (이미 대칭). 옛 기록 재현용으로 남김.
             kw["hip_fix"] = bool(int(v))
         elif k == "wf":                            # 걷기 입력 가중치의 수평력 (Fx, Fy ×2, 기본 0.001) — 두 발 내력 억제 (Q&A 9/29 Q12)
             kw["w_force_xy"] = float(v)

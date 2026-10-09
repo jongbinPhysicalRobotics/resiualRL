@@ -21,15 +21,15 @@ Updated as of April 2023 with values from Robot-Software
   <link name="base">
     <inertial>
       <origin
-        xyz="0.009896 0.004771 0.100522"
+        xyz="0.009896 0 0.100522"
         rpy="0 0 0" />
       <mass value="8.52" />
       <inertia
         ixx="0.172699"
-        ixy="0.001419"
+        ixy="0"
         ixz="0.004023"
         iyy="0.105949"
-        iyz="-0.001672"
+        iyz="0"
         izz="0.091906" />
     </inertial>
     <visual>
@@ -310,7 +310,7 @@ Updated as of April 2023 with values from Robot-Software
       <inertia
         ixx="0.0015373"
         ixy="0.0000011"
-        ixz="0.0005578"
+        ixz="-0.0005578"
         iyy="0.0014252"
         iyz="0.0000024"
         izz="0.0012028" />
