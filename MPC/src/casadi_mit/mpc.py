@@ -124,7 +124,7 @@ class RefOut:
     tk: np.ndarray         # (N,)    t0 + k·dt  (cycle 원점 기준, HorizonClock.h:32-34)
 
 
-def build_reference(filtered_cmd, seed_x, desired_feet, clock, cfg) -> RefOut:
+def build_reference(filtered_cmd, seed_x, desired_feet, clock, cfg, vlat_add=None) -> RefOut:
     """ReferenceTrajectory::build (ReferenceTrajectory.cpp:8-83) with yaw_integration_mode 'always'.
 
     seed_x: 호출자가 모드별로 만든 seed (My_Controller.cpp:966-978, spec 05 §8.2).
@@ -133,6 +133,7 @@ def build_reference(filtered_cmd, seed_x, desired_feet, clock, cfg) -> RefOut:
     filtered_cmd: x_dot, y_dot, psi_dot, body_height_offset_m (필터된 명령, MC:610-654)
     desired_feet: (2,3) 이번 tick 의 목표 발 위치 (horizon 전체에 상수, RT:65-66)
     clock: .tk(k) → t0 + k·dt  (없으면 tk = k·dt)
+    vlat_add: (N,) 변형 latsway (Q&A 10/6 Q37) — 스텝별 옆 속도 참조 덧셈 [m/s, 진행 방향 좌표]. None = reference 그대로.
     """
     mode = str(_cfg(cfg, "reference_trajectory.yaw_integration_mode", "always")).lower()
     if mode != "always":
@@ -164,10 +165,11 @@ def build_reference(filtered_cmd, seed_x, desired_feet, clock, cfg) -> RefOut:
             psi_ref = psi_ref + psi_dot * dt
         psi_k = psi_ref
         c, s = np.cos(psi_k), np.sin(psi_k)
-        v_ref = np.array([c * ux - s * uy, s * ux + c * uy, 0.0])   # Rz(psi_k)·[x_dot, y_dot, 0]  (BMR:58-60)
+        uy_k = uy + (float(vlat_add[k]) if vlat_add is not None else 0.0)
+        v_ref = np.array([c * ux - s * uy_k, s * ux + c * uy_k, 0.0])   # Rz(psi_k)·[x_dot, y_dot, 0]  (BMR:58-60)
         if k > 0:
             if dt > 0.0:                                # BMR advancePlanarPosition
-                p_ref = p_ref + np.array([c * ux - s * uy, s * ux + c * uy, 0.0]) * dt
+                p_ref = p_ref + np.array([c * ux - s * uy_k, s * ux + c * uy_k, 0.0]) * dt
             p_ref[2] = seed[5] + h_off                  # RT:61
         TK[k] = tk
         PSI[k] = psi_k

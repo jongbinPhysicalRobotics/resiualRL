@@ -296,6 +296,33 @@ class MitController:
 
 
     # MPC
+    def _lateral_sway_velocity(self, seed, desired, t):
+        """변형 latsway (Q&A 10/6 Q37): 옆 역진자 (LIPM) 주기 궤도의 옆 속도를 지평 칸마다 (진행 방향 좌표, 왼쪽 +).
+        한 걸음 T = cycle/2 를 '두 발 지지 가운데 → 다음 두 발 지지 가운데' 로 보고, 그 사이 디딤 발 (옆 ±w) 둘레 역진자:
+          y(τ) = s·(w − A·cosh(ω(τ − T/2))),  A = w / cosh(ωT/2)  → 걸음 경계에서 가운데 (y = 0) 를 지나는 대칭 궤도 (유도)
+          v(τ) = s·A·ω·sinh(ω(T/2 − τ))       (τ = 0 에 디딤 발 쪽으로, τ = T 에 반대쪽으로)
+        s = 디딤 발 쪽 (왼 +1 · 오른 −1), ω = √(g/z0), z0 = MPC 높이 참조, w = 두 목표 발 (desired) 옆 거리의 절반.
+        시각은 실제 시각 t + k·dt (접촉표 원점과 무관). 크기 배율 = mpc.lateral_sway_scale."""
+        sc = float(cfg_get(self.cfg, "mpc.lateral_sway_scale", 0.0) or 0.0)
+        cyc, st_T = float(self.clock.cycle), float(self.gait.stance)
+        T = 0.5 * cyc
+        ds = max(st_T - T, 0.0)                                      # 한 걸음의 두 발 지지 시간
+        z0 = max(float(seed[5]), 0.2)
+        om = np.sqrt(abs(float(self.mpc.gravity)) / z0)
+        psi = float(seed[2]); yv = np.array([-np.sin(psi), np.cos(psi), 0.0])
+        d_ = np.asarray(desired, dtype=float).reshape(2, 3)
+        w = float(np.clip(0.5 * abs((d_[LEFT] - d_[RIGHT]).dot(yv)), 0.02, 0.2))
+        A = w / np.cosh(0.5 * om * T)
+        out = np.zeros(self.mpc.N)
+        for k in range(self.mpc.N):
+            tk = t + k * float(self.clock.dt_mpc)
+            for leg, sg in ((LEFT, 1.0), (RIGHT, -1.0)):
+                tau = (self.gait.phase(leg, tk, self.clock) * cyc - 0.5 * ds) % cyc
+                if tau < T:
+                    out[k] = sc * sg * A * om * np.sinh(om * (0.5 * T - tau))
+                    break
+        return out
+
     def _tag_stance_fraction(self, steps, t, t_tab, n_lock):
         """변형 toeoff (Q&A 10/6 Q30): 칸마다 디딤 경과 비율 s ∈ [0, 1] 을 steps[k].stance_frac (2,) 에 붙인다.
         접촉표와 같은 시각을 쓴다 — override 칸 (지금 접촉) 은 지금 t, 나머지는 표의 tk.
@@ -347,7 +374,10 @@ class MitController:
                     psi_t = float(self.body.euler_W[2])
                     seed[3] -= self.ypath * self.lat_err * (-np.sin(psi_t))
                     seed[4] -= self.ypath * self.lat_err * np.cos(psi_t)
-            ref = build_reference(self.filtered.copy(), seed, desired, self.clock, self.cfg)
+            vlat = None
+            if self.mode == "walking" and float(cfg_get(self.cfg, "mpc.lateral_sway_scale", 0.0) or 0.0) > 0.0:
+                vlat = self._lateral_sway_velocity(seed, desired, t)   # 변형 latsway (Q&A 10/6 Q37)
+            ref = build_reference(self.filtered.copy(), seed, desired, self.clock, self.cfg, vlat_add=vlat)
             if "foot2" in self.fixes and self.mode == "walking":      # 변형: 지평 안 두 번째 착지 (Q&A 9/28 Q10)
                 foot_yaw = self._second_footholds(ref, steps, foot_yaw)
             self.last_ref = ref                                # 뷰어 오버레이용 (10_walk._draw_refs)

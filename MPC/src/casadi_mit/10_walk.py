@@ -128,7 +128,7 @@ def parse_variant(s: str | None) -> dict:
             kw["stand_yaw_hold"] = bool(int(v))
         elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
             kw["arm_swing"] = float(v)
-        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm", "zoff", "rsc", "fzmax", "mdt", "wsh", "wdum", "pitchtraj", "toeoff", "toeeps", "toepin"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
+        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm", "zoff", "rsc", "fzmax", "mdt", "wsh", "wdum", "pitchtraj", "toeoff", "toeeps", "toepin", "latsway"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
             path = {"tdz": "swing.touchdown_z", "fref": "mpc.force_ref_weight", "tswing": "timing.swing",
                     "tcycle": "timing.cycle", "hor": "timing.horizon", "kdz": "swing.kd_zeta",
                     "raii": "swing.raibert_int_gain", "psioff": "swing.psi_offset_scale",
@@ -169,6 +169,7 @@ def parse_variant(s: str | None) -> dict:
                     "toeoff": "mpc.toe_off_fraction",           # toeoff=f: 디딤 경과 f 이후 칸은 뒤꿈치 최소 하중을 풀어 CoP 를 발끝까지 (Q&A 10/6 Q30)
                     "toeeps": "mpc.toe_off_margin",             # toeeps=ε: 그 칸의 발끝 쪽 CoP 한계 (1 − 2ε)·l (기본 0 = 발끝 끝)
                     "toepin": "mpc.toe_off_pin",                # toepin=c: 그 칸의 CoP 를 발끝 쪽 [c·l, (1 − 2ε)·l] 에 묶음 (기본 없음 = 풀기만)
+                    "latsway": "mpc.lateral_sway_scale",        # latsway=s: MPC 옆 속도 참조에 LIPM 주기 궤도 흔들림 × s (기본 0 = 없음, Q&A 10/6 Q37)
                     "attank": "swing.attitude_ankle_only",    # attank=1: 스윙 발 pitch 자세 모멘트를 발목에만 (Q&A 10/6 Q3)
                     "swq": "swing.blend_order"}[k]             # swq=5: 스윙 궤적 5 차 최소 저크 (기본 3 차 smoothstep)
             kw.setdefault("raw_over", {})[path] = float(v)
@@ -184,6 +185,8 @@ def parse_variant(s: str | None) -> dict:
             kw.setdefault("swing_over", {})["natural_frequency"] = [151.0 * float(v), 151.0 * float(v), 110.0 * float(v)]
         elif k == "symcom":                        # 진단 전용 (Q&A 9/30 Q7): 몸통 무게중심 y 를 0 으로 (모델 좌우 대칭화)
             kw["sym_com"] = bool(int(v))
+        elif k == "syminert":                      # 변형 (Q&A 10/6 Q39): 몸통 관성의 좌우 비대칭 곱 관성 ixy · iyz 만 0 (질량 · 대각 · ixz 그대로)
+            kw["sym_inertia"] = bool(int(v))
         elif k == "wf":                            # 걷기 입력 가중치의 수평력 (Fx, Fy ×2, 기본 0.001) — 두 발 내력 억제 (Q&A 9/29 Q12)
             kw["w_force_xy"] = float(v)
         elif k == "pushrep":                       # 외란 반복 주기 [s] (0 = 한 번) — push 와 함께
@@ -493,7 +496,7 @@ def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale
            osqp_settings=None, fixes=(), x_dot_max=None, k_half=None, foot_model="ref", mpc_mu=None,
            stand_yaw_hold=True, stand_bias=True, side_swap=False, raibert_gain=0.0, ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None, sim_cone=None, yaw_hold=None,
            yaw_lead=None, point_fmin=None, k_half_y=None, swing_over=None, xpath=0.0, raw_over=None, w_force_xy=None,
-           sym_com=False):
+           sym_com=False, sym_inertia=False):
     cfg = config.load()
     if (x_dot_max is not None or k_half is not None or mpc_mu is not None or cop_half is not None or w_moment is not None
             or q_state or yaw_hold is not None or yaw_lead is not None or point_fmin is not None or k_half_y is not None or swing_over or raw_over
@@ -540,6 +543,20 @@ def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale
     model = MitModel(armature=armature, emulate_debug_markers=markers)
     if sym_com:                                   # 진단 전용: base 몸체 무게중심 y (+4.8 mm) 를 0 으로
         model.m.body_ipos[model.base_body, 1] = 0.0
+    if sym_inertia:                               # 변형 syminert (Q&A 10/6 Q39): URDF 몸통 관성의 ixy · iyz 만 0 으로
+        b_ = model.base_body                      # (좌우 대칭 몸통이면 0 이어야 하는 성분). 질량 · ixx · iyy · izz · ixz 는 그대로.
+        R_ = np.zeros(9); mujoco.mju_quat2Mat(R_, model.m.body_iquat[b_]); R_ = R_.reshape(3, 3)
+        I_ = R_ @ np.diag(model.m.body_inertia[b_]) @ R_.T             # 몸체 좌표, CoM 기준 전체 텐서 (= URDF 값)
+        I_[0, 1] = I_[1, 0] = 0.0
+        I_[1, 2] = I_[2, 1] = 0.0
+        w_, V_ = np.linalg.eigh(I_)
+        if np.linalg.det(V_) < 0.0:
+            V_[:, 2] *= -1.0
+        q_ = np.zeros(4); mujoco.mju_mat2Quat(q_, V_.reshape(-1))
+        model.m.body_inertia[b_] = w_
+        model.m.body_iquat[b_] = q_
+        model._rb_inertia = model.m.body_inertia[model.reduced_bodies].copy()   # 축소 몸체 주관성 캐시도 갱신
+        mujoco.mj_setConst(model.m, model.d)
     if sim_cone is not None:                      # 시뮬 마찰 원뿔 (MuJoCo 기본 pyramidal) — Q&A 9/28 Q6
         model.m.opt.cone = {"pyramidal": mujoco.mjtCone.mjCONE_PYRAMIDAL,
                             "elliptic": mujoco.mjtCone.mjCONE_ELLIPTIC}[sim_cone]
@@ -583,7 +600,7 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
              foot_model="ref", mpc_mu=None, stand_yaw_hold=True, stand_bias=True, side_swap=False, raibert_gain=0.0,
              ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None, sim_cone=None,
              yaw_hold=None, yaw_lead=None, point_fmin=None, k_half_y=None, swing_over=None, xpath=0.0,
-             raw_over=None, push=None, push_repeat=0.0, w_force_xy=None, sym_com=False):
+             raw_over=None, push=None, push_repeat=0.0, w_force_xy=None, sym_com=False, sym_inertia=False):
     """walking seconds 동안 (시뮬 = settle + seconds). 반환 dict (metrics + fell 등).
 
     push = (Fx, Fy, t0, dur): 진행 방향 (몸통 yaw) 기준 수평력 [N] 을 측정 창 시작 + t0 부터 dur 동안 몸통 CoM 에 가한다."""
@@ -595,7 +612,8 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
                                      arm_swing=arm_swing, cop_half=cop_half, w_moment=w_moment,
                                      q_state=q_state, sim_cone=sim_cone, yaw_hold=yaw_hold, yaw_lead=yaw_lead,
                                      point_fmin=point_fmin, k_half_y=k_half_y, swing_over=swing_over,
-                                     xpath=xpath, raw_over=raw_over, w_force_xy=w_force_xy, sym_com=sym_com)
+                                     xpath=xpath, raw_over=raw_over, w_force_xy=w_force_xy, sym_com=sym_com,
+                                     sym_inertia=sym_inertia)
     m, d = model.m, model.d
     total = (0.0 if stand else walk_t) + seconds
     n = int(round(total / m.opt.timestep))
