@@ -362,6 +362,9 @@ class MitController:
             else:
                 seed[0] = self.body.euler_W[0]
                 seed[1] = self.body.euler_W[1]
+                pk = float(cfg_get(self.cfg, "mpc.pitch_ref_per_speed", 0.0) or 0.0)   # 변형 pitchref (Q&A 10/6 Q51): 앞으로 걸을 때
+                if pk:                                             # 자연스러운 앞 숙임을 참조로 (pitch + = 앞으로 숙임) — 명령 전진 속도 × pk [rad]
+                    seed[1] += pk * float(self.filtered.x_dot)
                 seed[5] = self.body.nominal_height_W - dz
                 if "yawref" in self.fixes:                         # 변형: 방향 유지 (reference 는 x0 yaw)
                     seed[2] = self.body.euler_W[2]
