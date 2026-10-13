@@ -456,6 +456,7 @@ class ConvexMPC:
         self.fixed_iter = int(opts.pop("fixed_iter", 0) or 0)
         self.fixed_iter_stand = int(opts.pop("fixed_iter_stand", 0) or 0)   # 변형 admms (Q&A 10/1 Q22): 서기 모드 반복 수 (0 = 같음)
         self._iter_now = self.fixed_iter
+        self.rho_stand = float(opts.pop("rho_stand", 0.0) or 0.0)   # 변형 rhos (Q&A 10/6 Q55): 서기 모드 고정 ρ (0 = 걷기와 같음)
         self.init_mode = str(opts.pop("init", "nominal"))
         if self.init_mode not in ("nominal", "warm", "hold", "zero"):
             raise ValueError(f"init must be nominal / warm / hold / zero, got {self.init_mode!r}")
@@ -662,6 +663,7 @@ class ConvexMPC:
         s = osqp.OSQP()
         s.setup(P, q, A, l, u, **self.settings)
         self._solver = s
+        self._rho_now = float(self.settings["rho"])           # 변형 rhos: 새 workspace 는 걷기 ρ 로 시작
         self._initialized = True
 
     def _solve_once(self, use_warm: bool, info):
@@ -750,6 +752,11 @@ class ConvexMPC:
             if want != self._iter_now:
                 self._solver.update_settings(max_iter=want)
                 self._iter_now = want
+        if self.rho_stand > 0.0:                              # 변형 rhos: 모드에 따라 고정 ρ 바꾸기 (바뀔 때만 — OSQP 가 다시 분해)
+            want_r = self.rho_stand if getattr(self, "_mode_now", None) == "standing" else float(self.settings["rho"])
+            if want_r != getattr(self, "_rho_now", float(self.settings["rho"])):
+                self._solver.update_settings(rho=want_r)
+                self._rho_now = want_r
         res = self._solver.solve(raise_error=False)
         info["iters"] = int(res.info.iter)
         info["status"] = str(res.info.status)

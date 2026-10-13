@@ -104,6 +104,8 @@ def parse_variant(s: str | None) -> dict:
             kw.setdefault("osqp_settings", {})["init"] = str(v)
         elif k == "admms":                         # 서기 모드 고정 ADMM 반복 수 (기본 = admm 과 같음) — Q&A 10/1 Q22
             kw.setdefault("osqp_settings", {})["fixed_iter_stand"] = int(v)
+        elif k == "rhos":                          # 서기 모드 고정 ρ (기본 = rho 와 같음) — Q&A 10/6 Q55
+            kw.setdefault("osqp_settings", {})["rho_stand"] = float(v)
         elif k == "ruiz":                          # OSQP Ruiz 스케일링 반복 수 (기본 10) — Q&A 9/30 Q16
             kw.setdefault("osqp_settings", {})["scaling"] = int(v)
         elif k == "rho":                           # OSQP ρ (기본 0.1)
@@ -216,6 +218,9 @@ def parse_variant(s: str | None) -> dict:
             kw["cop_half"] = float(v)
         elif k == "wmom":                          # MPC 걷기 입력 가중치 중 발 모멘트 6 개 (기본 yaml 1e-3 — Q&A 9/28)
             kw["w_moment"] = float(v)
+        elif k in ("sqroll", "sqpitch", "sqyaw", "sqpx", "sqpy", "sqz", "sqwx", "sqwy", "sqvx", "sqvy"):   # 서기 상태 가중치 (기본 yaml roll 50000 / pitch 80000 / x 50000 / y 90000 / z 50000) — Q&A 10/6 Q55
+            kw.setdefault("q_state", {})[100 + {"sqroll": 0, "sqpitch": 1, "sqyaw": 2, "sqpx": 3, "sqpy": 4, "sqz": 5, "sqwx": 6, "sqwy": 7,
+                                                "sqvx": 9, "sqvy": 10}[k]] = float(v)
         elif k in ("qpitch", "qyaw", "qroll", "qvx", "qvy", "qpx", "qpy", "qz", "qvz"):   # MPC 걷기 상태 가중치 (기본 yaml roll 50000 / pitch 9000 / yaw 500 / vx 100 / vy 70)
             kw.setdefault("q_state", {})[{"qroll": 0, "qpitch": 1, "qyaw": 2, "qvx": 9, "qvy": 10,   # qpx · qpy · qz · qvz: Q&A 10/6 Q6
                                           "qpx": 3, "qpy": 4, "qz": 5, "qvz": 11}[k]] = float(v)
@@ -534,7 +539,10 @@ def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale
             raw["swing"]["enable_stance_foot_yaw_hold"] = bool(yaw_hold)
         if yaw_lead is not None:                  # 착지 yaw 선행 배율 — Q&A 9/28 Q6
             raw["swing"]["swing_foot_yaw_lead_scale"] = float(yaw_lead)
-        for i, w in (q_state or {}).items():      # 걷기 상태 가중치 (roll 0 / pitch 1 / yaw 2) — Q&A 9/28
+        for i, w in (q_state or {}).items():      # 서기 상태 가중치 (키 sq…, 정수 키 100 + i) — Q&A 10/6 Q55
+            if int(i) >= 100:
+                raw["mpc"]["standing"]["state_weight_diag"][int(i) - 100] = float(w)
+        for i, w in ((k_, v_) for k_, v_ in (q_state or {}).items() if int(k_) < 100):   # 걷기 상태 가중치 (roll 0 / pitch 1 / yaw 2) — Q&A 9/28
             raw["mpc"]["walking"]["state_weight_diag"][i] = float(w)
         if mpc_mu is not None:                    # MPC 마찰 제약 µ 변형 (기본 = yaml 1.0, Q&A 9/26 Q4)
             raw["mpc"]["friction_coefficient"] = float(mpc_mu)
