@@ -894,7 +894,9 @@ def main():
               x_dot_max=a.xmax, foot_model=a.foot, raibert_gain=a.rai, ypos_gain=a.ypos, ypath=a.ypath,
               arm_swing=a.armsw)
     if a.var:                                                   # 변형 키 (11_gait_quality 와 같은 문법) — 위 플래그 덮어씀
-        kw.update(parse_variant(a.var))
+        sys.path.insert(0, str(Path(__file__).resolve().parent / "diag"))   # 'A35' · 'A34,kdz=1.0' 처럼 설정 이름도 받는다 (diag/configs.py, Q&A 10/6 Q51)
+        from configs import resolve as _resolve_cfg
+        kw.update(parse_variant(_resolve_cfg(a.var)))
     if a.view:
         view(a.vx, a.vy, a.wz, a.seconds, **kw)
         return
