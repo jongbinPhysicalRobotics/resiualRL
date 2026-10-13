@@ -80,7 +80,7 @@ def table(path, labels):
         main = [D.get((v, c)) for c in conds]
         groups = defaultdict(lambda: [0, 0])
         for (vv, c), r in D.items():
-            if vv != v or c in conds:
+            if vv != v or c in conds or not (c.startswith("wp") or c.startswith("stand_")):   # 표준 밖 라벨 (고속 등) 은 건너뜀
                 continue
             g = c.split("_")[0] if c.startswith("wp") else ("stand_" + c.split("_")[1][1:])
             groups[g][1] += 1; groups[g][0] += int(bool(r["pass"]))

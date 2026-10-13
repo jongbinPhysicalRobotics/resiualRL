@@ -286,8 +286,11 @@ class MitController:
             T = max(self.gait.remaining_swing_time(leg, t), self.min_remaining)
             if rt.was_in_stance or not rt.traj.active:
                 rt.touchdown_yaw = yaw_with_psi_offset(psi_dot, leg, fallback_yaw)
-                rt.traj.reset(p_now, target, self.swing_height, T)
                 self._mark_liftoff_yaw(rt, state, leg, t, T)
+                p0 = p_now
+                if self._toe_traj_on() and np.isfinite(rt.pit_lo):   # 변형 toetraj: 높이 궤적을 발끝에서 시작
+                    p0 = np.asarray(p_now, dtype=float) - np.array([0.0, 0.0, self._toe_drop(-rt.pit_lo)])
+                rt.traj.reset(p0, target, self.swing_height, T)
             else:
                 rt.traj.set_final_position(target)
                 rt.traj.advance(dt)
@@ -500,6 +503,33 @@ class MitController:
         rate = rt.pit_lo * (30 * s**2 - 60 * s**3 + 30 * s**4) / rt.T_pit if s < 1.0 else 0.0
         return bias, rate
 
+    def _toe_traj_on(self) -> bool:
+        return bool(float(cfg_get(self.cfg, "swing.toe_height_trajectory", 0) or 0)) and \
+            bool(cfg_get(self.cfg, "swing.pitch_trajectory_fraction", None))
+
+    def _toe_drop(self, th) -> float:
+        """발끝 내림 각 th (+ = 발끝 아래) 일 때 발끝이 발 site 보다 낮은 높이 l·sin th (발끝 위면 0)."""
+        return float(cfg_get(self.cfg, "mpc.foot_half_length")) * math.sin(max(float(th), 0.0))
+
+    def _toe_traj_offset(self, rt, t):
+        """변형 toetraj (Q&A 10/6 Q61): 스윙 높이 궤적을 발 site 대신 발끝에 건다. 궤적은 이륙 때 발끝 높이에서 시작하고
+        (reset 에서 p_init.z −= l·sin θ₀), site 목표 = 궤적 + l·sin θ_ref(t). θ_ref = −(pitchtraj 보정각 목표) 는 이륙 기울기에서
+        수평으로 줄어드는 발끝 내림 각 → 이륙 순간 site 목표 = 실제 site (튐 없음), θ_ref = 0 이 된 뒤 (스윙 f 이후) 는 기존과 같다.
+        반환 (Δp, Δv, Δa) z 성분 (속도 · 가속은 θ_ref 의 미분으로)."""
+        if not self._toe_traj_on() or not np.isfinite(rt.pit_lo):
+            return 0.0, 0.0, 0.0
+        s = min(max((float(t) - rt.t_plo) / rt.T_pit, 0.0), 1.0)
+        th0 = -rt.pit_lo
+        if th0 <= 0.0:
+            return 0.0, 0.0, 0.0
+        l = float(cfg_get(self.cfg, "mpc.foot_half_length"))
+        th = th0 * (1.0 - (10 * s**3 - 15 * s**4 + 6 * s**5))
+        if s >= 1.0:
+            return 0.0, 0.0, 0.0
+        thd = -th0 * (30 * s**2 - 60 * s**3 + 30 * s**4) / rt.T_pit
+        thdd = -th0 * (60 * s - 180 * s**2 + 120 * s**3) / rt.T_pit**2
+        return l * math.sin(th), l * math.cos(th) * thd, l * (math.cos(th) * thdd - math.sin(th) * thd**2)
+
     def _swing_yaw_ref(self, rt, t):
         """변형 yawtraj (Q&A 9/29 Q1): 착지 yaw 를 한 번에 목표로 주는 대신 최소 저크 곡선으로 보간.
         s = (t − t_lo)/T_yaw ∈ [0,1], ψ_des = ψ_lo + Δ·(10s³ − 15s⁴ + 6s⁵), ψ̇_des = Δ·(30s² − 60s³ + 30s⁴)/T_yaw,
@@ -624,8 +654,10 @@ class MitController:
                 ff_mode = int(cfg_get(cfg, "swing.yaw_trajectory_ff", 1))
                 torso_ref = float(self.filtered.psi_dot) if ff_mode == 2 else float(state.torso_angvel_W[2])
                 p_bias, p_rate = self._swing_pitch_ref(rt, t)       # 변형 pitchtraj (Q&A 10/6 Q28)
-                tau[leg] = swing_torque(dyn, state, leg, rt.traj.position(), rt.traj.velocity(),
-                                        rt.traj.acceleration(), rt.touchdown_yaw, cfg,
+                pz_, vz_, az_ = self._toe_traj_offset(rt, t)          # 변형 toetraj (Q&A 10/6 Q61), 꺼져 있으면 0
+                ez_ = np.array([0.0, 0.0, 1.0])
+                tau[leg] = swing_torque(dyn, state, leg, rt.traj.position() + pz_ * ez_, rt.traj.velocity() + vz_ * ez_,
+                                        rt.traj.acceleration() + az_ * ez_, rt.touchdown_yaw, cfg,
                                         yaw_des=yaw_des, yaw_rate_des=yaw_rate_des,
                                         torso_wz=torso_ref,   # yawff=2: 몸통 회전은 명령 ψ̇ 로 (Q&A 9/29 Q1)
                                         pitch_bias=p_bias, pitch_rate_ref=p_rate)
@@ -728,7 +760,7 @@ class MitController:
         out = np.full((2, 3), np.nan)
         for leg in LEGS:
             if not self._active(leg, self.state.t):
-                out[leg] = self.legs[leg].traj.position()
+                out[leg] = self.legs[leg].traj.position() + np.array([0.0, 0.0, self._toe_traj_offset(self.legs[leg], self.state.t)[0]])
         return out
 
     def heading_R(self) -> np.ndarray:

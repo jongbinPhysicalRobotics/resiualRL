@@ -40,6 +40,8 @@ class ContactManager:
         self.stance_loss_height = float(g("stance_contact_loss_foot_height", 0.025))
         self.enable_early = bool(g("enable_early_contact_handling", True))
         self.enable_late = bool(g("enable_late_contact_handling", True))
+        # 변형 ecgate (Q&A 10/6 Q61): 스윙 경과 비율이 이 값보다 작으면 조기 접촉으로 디딤 전환하지 않음 (기본 0 = reference)
+        self.early_min_phase = float(g("early_contact_min_swing_phase", 0.0) or 0.0)
 
         # public per-leg state (ContactManagerLegState 기본값, ContactManager.h:12-30)
         self.scheduled = np.ones(2, dtype=bool)
@@ -234,6 +236,10 @@ class ContactManager:
                 self.released_during_swing[leg] = True
 
             early = self.enable_early and (not sched) and est and bool(self.released_during_swing[leg])
+            if early and self.early_min_phase > 0.0 and not self.prev_active[leg]:   # 이미 조기 디딤이면 유지
+                sw = float(gait.swing)
+                if sw > 0.0 and 1.0 - float(gait.remaining_swing_time(leg, t)) / sw < self.early_min_phase:
+                    early = False
             self.early[leg] = early
 
             scheduled_touchdown = sched and not self.prev_scheduled[leg]

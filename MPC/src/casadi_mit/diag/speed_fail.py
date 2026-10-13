@@ -9,7 +9,8 @@ import sys, importlib.util
 import numpy as np
 from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent          # casadi_mit
-sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT)); sys.path.insert(0, str(_ROOT / "diag"))
+from configs import resolve
 spec = importlib.util.spec_from_file_location("walk", str(_ROOT / "10_walk.py"))
 W = importlib.util.module_from_spec(spec); spec.loader.exec_module(W)
 NAMES = ["hip_yaw", "hip_abad", "hip_pitch", "knee", "ankle"]
@@ -17,11 +18,11 @@ LEG_LEN = 0.267 + 0.2785
 
 
 def run(vx, seconds, var):
-    kw = W.parse_variant(var)
+    kw = W.parse_variant(resolve(var))
     r = W.headless(vx, 0.0, 0.0, seconds, verbose=False, keep_record=True, **kw)
     R = r["record"]
     pos = dict(solver="osqp", armature=True, profile="const", markers=False, stand=False, friction_scale=1.0, fsm_double_update=True)
-    kw2 = W.parse_variant(var)
+    kw2 = W.parse_variant(resolve(var))
     for k in list(kw2):
         if k in pos:
             pos[k] = kw2.pop(k)
@@ -71,7 +72,10 @@ def run(vx, seconds, var):
             hip = R["base"][i] - np.array([0.0, 0.0, 0.132])   # 근사: hip pitch 축 ≈ 몸통 원점 아래 0.132 m (hip_yaw · abad 오프셋 합)
             dpos = R["desired"][i - 3, leg] - hip
             reach = float(np.hypot(dpos[:2].dot(hv), dpos[2]))      # 시상면 hip → 목표 착지점 거리
-            rows.append([t[i], e.dot(hv), e.dot(yv), dpos[:2].dot(hv), reach])
+            run_ = np.flatnonzero(np.diff(np.r_[1, a[:i].astype(int)]) == -1)   # 이륙 틱 (1 → 0) 들
+            t_sw = t[i] - t[run_[-1]] if len(run_) else np.nan
+            foot_fwd = (R["foot"][i, leg, :2] - R["base"][i, :2]).dot(hv)
+            rows.append([t[i], e.dot(hv), e.dot(yv), dpos[:2].dot(hv), reach, leg, t_sw, foot_fwd, R["rpy"][i, 1]])
     if rows:
         A = np.array(rows)
         last = A[A[:, 0] > t_end - 2.0]
@@ -80,6 +84,8 @@ def run(vx, seconds, var):
         if len(last):
             print(f"  착지 (넘어지기 전 2 s, {len(last)} 걸음): 앞뒤 오차 " + " ".join(f"{1e3*x:+.0f}" for x in last[:, 1]) +
                   " mm · 목표 앞 " + " ".join(f"{1e3*x:+.0f}" for x in last[:, 3]) + " mm")
+            print("    다리 · 스윙 시간 [ms] · 실제 발 몸통 앞 [mm] · 착지 순간 pitch [°]: " +
+                  "  ".join(f"{'LR'[int(r_[5])]} {1e3*r_[6]:.0f} {1e3*r_[7]:+.0f} {np.degrees(r_[8]):+.0f}" for r_ in last))
 
 
 if __name__ == "__main__":
