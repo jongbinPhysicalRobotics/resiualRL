@@ -128,7 +128,7 @@ def parse_variant(s: str | None) -> dict:
             kw["stand_yaw_hold"] = bool(int(v))
         elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
             kw["arm_swing"] = float(v)
-        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm", "zoff", "rsc", "fzmax", "mdt", "wsh", "wdum", "pitchtraj", "toeoff", "toeeps", "toepin", "latsway"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
+        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm", "zoff", "rsc", "fzmax", "mdt", "wsh", "wdum", "pitchtraj", "toeoff", "toeeps", "toepin", "latsway", "holdclip", "pitchref"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
             path = {"tdz": "swing.touchdown_z", "fref": "mpc.force_ref_weight", "tswing": "timing.swing",
                     "tcycle": "timing.cycle", "hor": "timing.horizon", "kdz": "swing.kd_zeta",
                     "raii": "swing.raibert_int_gain", "psioff": "swing.psi_offset_scale",
@@ -170,6 +170,8 @@ def parse_variant(s: str | None) -> dict:
                     "toeeps": "mpc.toe_off_margin",             # toeeps=ε: 그 칸의 발끝 쪽 CoP 한계 (1 − 2ε)·l (기본 0 = 발끝 끝)
                     "toepin": "mpc.toe_off_pin",                # toepin=c: 그 칸의 CoP 를 발끝 쪽 [c·l, (1 − 2ε)·l] 에 묶음 (기본 없음 = 풀기만)
                     "latsway": "mpc.lateral_sway_scale",        # latsway=s: MPC 옆 속도 참조에 LIPM 주기 궤도 흔들림 × s (기본 0 = 없음, Q&A 10/6 Q37)
+                    "holdclip": "swing.stance_yaw_hold_torsion_clip",   # holdclip=s: 디딤 발 yaw hold 뒤 비틀림을 두 점 마찰 구간 (× s) 으로 (기본 0 = 끔, Q&A 10/6 Q50)
+                    "pitchref": "mpc.pitch_ref_per_speed",      # pitchref=a: MPC pitch 참조 += a × 명령 전진 속도 [rad per m/s] (기본 0, Q&A 10/6 Q51)
                     "attank": "swing.attitude_ankle_only",    # attank=1: 스윙 발 pitch 자세 모멘트를 발목에만 (Q&A 10/6 Q3)
                     "swq": "swing.blend_order"}[k]             # swq=5: 스윙 궤적 5 차 최소 저크 (기본 3 차 smoothstep)
             kw.setdefault("raw_over", {})[path] = float(v)
