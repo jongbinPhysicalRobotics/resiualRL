@@ -3,7 +3,8 @@
 A30: 10/1 발표 설정 (`Convex MPC/` 폴더와 같은 값)
 A33: A30 + wsh=0.5 (warm start 반 칸, Q18) + kdz=0.8 (스윙 감쇠, Q27) + pitchtraj=0.7 (스윙 발 pitch 궤적, Q28)
 A34: A33 + qpy=1e5 (옆 위치 가중치 1/10, Q39 · Q44 · Q45) — 10/9 채택
-A35: A34 + qpitch=3000 (pitch 가중치 1/3, Q51) — 10/13 후보 (사용자 뷰어 확인 전)
+A35: A34 + qpitch=3000 (pitch 가중치 1/3, Q51) — 10/13 채택 (사용자)
+A36: A35 + yawlead=1 (착지 yaw 선행 1 을 기본 · 주 결과로, Q52 · Q53) — 10/13 사용자 결정. 시험은 선행 0 / 0.5 / 1 모두
 모델은 10/9 대칭판 (Q42) 기준.
 """
 A30 = ("profile=ramp,fix=half+yawref,ypath=0.3,init=warm,yawtraj=1.0,yawff=2,rai=0.2,vdir=0.7,nbs=5,rho=5e-5,hor=0.44,fref=1e-3,"
@@ -13,7 +14,8 @@ A30 = ("profile=ramp,fix=half+yawref,ypath=0.3,init=warm,yawtraj=1.0,yawff=2,rai
 A33 = A30 + ",wsh=0.5,kdz=0.8,pitchtraj=0.7"
 A34 = A33 + ",qpy=100000"
 A35 = A34 + ",qpitch=3000"
-CONFIGS = {"A30": A30, "A33": A33, "A34": A34, "A35": A35}
+A36 = A35 + ",yawlead=1"
+CONFIGS = {"A30": A30, "A33": A33, "A34": A34, "A35": A35, "A36": A36}
 
 
 def resolve(spec: str) -> str:
