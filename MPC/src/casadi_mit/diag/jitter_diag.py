@@ -17,7 +17,8 @@ W = importlib.util.module_from_spec(spec); spec.loader.exec_module(W)
 
 
 def run(vx, vy, wz, seconds, var, out):
-    kw = W.parse_variant(var); prof = kw.pop("profile", "ramp")
+    sys.path.insert(0, str(_ROOT / "diag")); from configs import resolve
+    kw = W.parse_variant(resolve(var)); prof = kw.pop("profile", "ramp")
     cfg, model, ctl, walk_t = W._setup(vx, vy, wz, kw.pop("solver", "osqp"), True, prof, False, False, 1.0, True, False, **kw)
     m, d = model.m, model.d
     f6 = np.zeros(6); v6 = np.zeros(6)
