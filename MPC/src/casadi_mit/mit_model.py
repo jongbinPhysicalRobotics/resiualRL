@@ -83,15 +83,44 @@ def collect_assets(folder=None) -> dict:
     return {f.name: f.read_bytes() for f in folder.rglob("*") if f.is_file()}
 
 
+FOOT_BODY_NAMES = ("left_foot", "right_foot")
+# 변형 foot4=box (Q&A 10/6 Q65): URDF 원저자가 주석으로 남긴 'BOX CONTACT FOOT' (urdf_source/humanoid_full_sf.urdf 284 ~ 288 줄 오른발 · 511 ~ 515 줄 왼발,
+# 상자 0.15 × 0.02 × 0.04 를 x 축 90° 회전 = 길이 15 · 폭 4 · 높이 2 cm, 중심 (0.03, 0, -0.03)). 회전 없이 반크기로 쓰면 같은 상자.
+# 바닥면 z = -0.04 · 앞뒤 끝 x -0.045 / +0.105 는 지금 원기둥과 같고, 폭만 0 → ±0.02 m. 평평하게 닿으면 MuJoCo 접촉 4 점 (네 모서리).
+FOOT_BOX_HALF = (0.075, 0.02, 0.01)
+FOOT_BOX_POS = (0.03, 0.0, -0.03)
+
+
+def _swap_foot_collision(spec: mujoco.MjSpec, foot_geom: str) -> None:
+    """발 바디의 충돌 원기둥 (선 발) 을 지우고 foot_geom 모양을 넣는다. 보이는 mesh (contype 0) · 질량 · 관성은 그대로
+    (충돌 geom 은 원래 density 기본값이지만 바디에 <inertial> 이 있어 질량에 안 들어간다)."""
+    if foot_geom != "box":
+        raise ValueError(f"unknown foot_geom {foot_geom!r} (line | box)")
+    for name in FOOT_BODY_NAMES:
+        body = spec.body(name)
+        cyl = [g for g in body.geoms if g.type == mujoco.mjtGeom.mjGEOM_CYLINDER]
+        if len(cyl) != 1:
+            raise RuntimeError(f"{name}: 충돌 원기둥이 {len(cyl)} 개 (1 개여야 함)")
+        rgba = list(cyl[0].rgba)
+        spec.delete(cyl[0])
+        body.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=list(FOOT_BOX_HALF), pos=list(FOOT_BOX_POS), group=3, rgba=rgba)
+
+
 def load_model(armature: bool = True, timestep: float = 0.002, integrator: str = "implicitfast",
-               assets: dict | None = None) -> mujoco.MjModel:
+               assets: dict | None = None, foot_geom: str = "line") -> mujoco.MjModel:
     """scene.xml (mit_humanoid.xml include) 을 VFS 로 컴파일.
 
     reference 는 로드 후 timestep/integrator 를 simulation.yaml 값으로 덮어쓴다 (SimulationConfig.cpp:96-104).
-    armature=False: dof_armature 를 0 으로 (D1 민감도 옵션)."""
+    armature=False: dof_armature 를 0 으로 (D1 민감도 옵션).
+    foot_geom: "line" = 파일 그대로 (원기둥 선 발, 접촉 2 점), "box" = 발 충돌 geom 만 상자로 바꿔 컴파일 (접촉 4 점, Q&A 10/6 Q65)."""
     assets = collect_assets() if assets is None else assets
     xml = assets["scene.xml"].decode("utf-8")
-    m = mujoco.MjModel.from_xml_string(xml, assets)
+    if foot_geom == "line":
+        m = mujoco.MjModel.from_xml_string(xml, assets)
+    else:
+        spec = mujoco.MjSpec.from_string(xml, include={k: v for k, v in assets.items() if k.endswith(".xml")}, assets=assets)
+        _swap_foot_collision(spec, foot_geom)
+        m = spec.compile()
     m.opt.timestep = float(timestep)
     m.opt.integrator = {"implicitfast": mujoco.mjtIntegrator.mjINT_IMPLICITFAST,
                         "euler": mujoco.mjtIntegrator.mjINT_EULER,
@@ -231,10 +260,11 @@ class MitModel:
           reduced_bodies (축소 몸체에 들어가는 body id 배열)."""
 
     def __init__(self, armature: bool = True, timestep: float = 0.002, integrator: str = "implicitfast",
-                 emulate_debug_markers: bool = False):
+                 emulate_debug_markers: bool = False, foot_geom: str = "line"):
         self.assets = collect_assets()
         self.armature = bool(armature)
-        self.m = load_model(armature, timestep, integrator, self.assets)
+        self.foot_geom = str(foot_geom)
+        self.m = load_model(armature, timestep, integrator, self.assets, foot_geom=self.foot_geom)
         self.d = mujoco.MjData(self.m)
         m = self.m
 
