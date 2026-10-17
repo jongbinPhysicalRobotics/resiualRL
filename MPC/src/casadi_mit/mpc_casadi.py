@@ -194,8 +194,12 @@ class CasadiCondensedMPC(ConvexMPC):
         # 변형 toeoff (Q&A 10/6 Q30, 기본 끔): 걷기에서 디딤 경과 ≥ f 인 칸은 행 7 (발끝 쪽 CoP = 뒤꿈치 최소 하중) 만
         # (1 − 2ε_toe)·l 로 푼다 (ε_toe 기본 0 → 뒤꿈치 하중 0 까지, CoP 발끝 끝). 칸별 경과는 steps[k].stance_frac (controller).
         self.toe_off_frac = float(_cfg(cfg, "mpc.toe_off_fraction", 0.0) or 0.0)
+        # 변형 toesense (Q&A 10/6 Q83, 기본 0 = 끔): controller 가 실제 상태 (발목 각 · 뒤꿈치 힘) 로 '발끝 모드' 를 정해
+        # toe_now (2,) 에 넣으면, 그 발의 지금 디딤 구간 (지평 앞에서 첫 스윙 칸 전까지) 칸을 template_toe 로 푼다.
+        self.toe_sense_mode = int(float(_cfg(cfg, "mpc.toe_sense_mode", 0) or 0))
+        self.toe_now = np.zeros(2, dtype=bool)
         self.late0 = np.zeros(2, dtype=bool)                 # 첫 칸이 풀린 다리 — controller 의 lproj 투영도 template_toe 로
-        if foot_model == "line" and self.toe_off_frac > 0.0:
+        if foot_model == "line" and (self.toe_off_frac > 0.0 or self.toe_sense_mode > 0):
             self.template_toe = self.template_walk.copy()
             self.template_toe[7] = line_foot_template(cfg, margin=float(_cfg(cfg, "mpc.toe_off_margin", 0.0) or 0.0))[7]
             # toepin=c (기본 없음 = 풀기만): 행 6 도 바꿔 CoP 를 발끝 쪽 [c·l, (1 − 2ε_toe)·l] 에 묶는다 (my ≤ −c·l·Fz)
@@ -264,6 +268,12 @@ class CasadiCondensedMPC(ConvexMPC):
                 and getattr(steps[0], "stance_frac", None) is not None):   # 변형 toeoff: 디딤 후반 칸의 행 7 교체
             frac = np.array([np.asarray(s.stance_frac, dtype=float) for s in steps]).reshape(n, 2)
             late = stance & (frac >= self.toe_off_frac)
+        if self.foot_model == "line" and self.toe_sense_mode > 0 and getattr(self, "_mode_now", None) == "walking":
+            for side in (0, 1):                                    # 변형 toesense: 지금 디딤 구간 (첫 스윙 칸 전까지) 만
+                if self.toe_now[side] and stance[0, side]:
+                    sw = np.flatnonzero(~stance[:, side])
+                    late[:(sw[0] if len(sw) else n), side] = True
+        if late.any():
             for side, yaws, off, cmap in ((0, yawL, 0, LEFT_MAP), (1, yawR, 12, RIGHT_MAP)):
                 for k in np.flatnonzero(late[:, side]):
                     cw = np.array(self._rot_fn_toe(yaws[k]))

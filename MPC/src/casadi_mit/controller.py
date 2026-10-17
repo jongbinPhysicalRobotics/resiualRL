@@ -187,6 +187,9 @@ class MitController:
             rt.was_search = False
             rt.touchdown_yaw = self._swing_yaw_target(state) + swing_foot_yaw_psi_offset(leg, self.filtered.psi_dot)
         self.u_hold = np.zeros(12)                                 # _stanceWrenchWorld
+        self._toe_latch = np.zeros(2, dtype=bool)                  # 변형 toesense (Q&A 10/6 Q83): 이번 디딤에서 발끝 모드로 바뀐 다리
+        self._heel_seen = np.zeros(2, dtype=bool)                  #   이번 디딤에서 뒤꿈치가 하중을 받은 적이 있나
+        self._toe_td_t = np.full(2, -1.0)                          #   이번 디딤 시작 (active 가 켜진) 시각
         self.last_ref = None
         self.iteration = 0
         self.last_mpc_iteration = 0
@@ -326,6 +329,35 @@ class MitController:
                     break
         return out
 
+    def _update_toe_mode(self, state, active):
+        """변형 toesense (Q&A 10/6 Q83): 디딤 발을 '발끝 모드' 로 바꿀지 실제 상태로 정하고, 이륙할 때까지 유지 (latch).
+        mode 1 = 발목 각이 한계 근처 (q_ankle ≤ −toe_sense_ankle, 발목 한계 −0.80 rad 쪽 = 정강이가 발 위로 앞으로 기욺, Q68),
+        mode 2 = 뒤꿈치가 하중을 받다가 (≥ 20 N) 떨어짐 (< 5 N), mode 3 = 둘 중 하나. 걷기에서만.
+        두 모드 모두 '착지 후 60 ms 지남 + 이번 디딤에서 뒤꿈치가 20 N 이상 받은 적 있음' 일 때만 — 첫 시험에서 착지 순간
+        발목이 이미 −0.77 이라 착지부터 발끝에 묶여 뒤로 넘어졌다 (Q83).
+        발끝 모드인 발은 MPC 가 지금 디딤 구간을 template_toe (뒤꿈치 최소 하중 풀기 · toepin 이면 CoP 를 발끝에 묶음) 로 푼다."""
+        mode = int(getattr(self.mpc, "toe_sense_mode", 0))
+        thr = float(cfg_get(self.cfg, "mpc.toe_sense_ankle", 0.76) or 0.76)
+        heel = np.asarray(getattr(state, "foot_heel_force", np.zeros(2)), dtype=float)
+        q = np.asarray(state.q_leg, dtype=float).reshape(2, 5)
+        t = float(state.t)
+        for leg in LEGS:
+            if self.mode != "walking" or not active[leg]:
+                self._toe_latch[leg] = False
+                self._heel_seen[leg] = False
+                self._toe_td_t[leg] = -1.0
+                continue
+            if self._toe_td_t[leg] < 0.0:
+                self._toe_td_t[leg] = t
+            if heel[leg] >= 20.0:
+                self._heel_seen[leg] = True
+            ready = bool(self._heel_seen[leg]) and (t - self._toe_td_t[leg]) >= 0.06
+            by_ankle = q[leg, 4] <= -thr
+            by_heel = heel[leg] < 5.0
+            if ready and ((mode in (1, 3) and by_ankle) or (mode in (2, 3) and by_heel)):
+                self._toe_latch[leg] = True
+        return self._toe_latch.copy()
+
     def _tag_stance_fraction(self, steps, t, t_tab, n_lock):
         """변형 toeoff (Q&A 10/6 Q30): 칸마다 디딤 경과 비율 s ∈ [0, 1] 을 steps[k].stance_frac (2,) 에 붙인다.
         접촉표와 같은 시각을 쓴다 — override 칸 (지금 접촉) 은 지금 t, 나머지는 표의 tk.
@@ -398,6 +430,8 @@ class MitController:
             mz_ref = None
             if self.mode == "walking" and float(cfg_get(self.cfg, "mpc.hold_in_mpc_weight", 0.0) or 0.0) > 0.0:
                 mz_ref = self._hold_mz_ref(state, t, active)       # 변형 hmpc (Q&A 9/30 Q14)
+            if getattr(self.mpc, "toe_sense_mode", 0):
+                self.mpc.toe_now = self._update_toe_mode(state, active)   # 변형 toesense (Q&A 10/6 Q83)
             u0, info = self.mpc.solve(x0, ref, steps, foot_yaw, red, self.mode, active=active, mz_ref=mz_ref)
             info["x_ref0"] = ref.X_ref[0].copy()
             info["stance0"] = np.asarray(steps[0].stance, dtype=bool).copy()

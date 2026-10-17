@@ -220,6 +220,7 @@ class RobotState:
     yaw_rate_W: float = 0.0                                                   # 추정기 부산물 (미사용)
     foot_force_W: np.ndarray = field(default_factory=lambda: np.zeros((2, 3)))  # 발에 작용하는 접촉력 합 (미사용)
     foot_contact_count: np.ndarray = field(default_factory=lambda: np.zeros(2, dtype=int))
+    foot_heel_force: np.ndarray = field(default_factory=lambda: np.zeros(2))   # 발 site 보다 뒤 (발 x < 0) 접촉의 수직력 합 (Q&A 10/6 Q83)
 
     # --- ref: My_Controller.cpp:315-332 ---
     def com_offset_W(self) -> np.ndarray:
@@ -446,8 +447,10 @@ class MitModel:
         count = np.zeros(2, dtype=int)
         normal = np.zeros(2)
         force = np.zeros((2, 3))
+        heel = np.zeros(2)
         n = d.ncon
         if n == 0:
+            self._heel_force = heel
             return contact, count, normal, force
         g1 = d.contact.geom1[:n]
         g2 = d.contact.geom2[:n]
@@ -465,6 +468,10 @@ class MitModel:
                 count[leg] += 1
                 force[leg] += (1.0 if is2 else -1.0) * F_on_g2
                 normal[leg] += abs(self._f6[0])
+                Rf = d.site_xmat[self.foot_site[leg]].reshape(3, 3)
+                if Rf[:, 0].dot(d.contact.pos[i] - d.site_xpos[self.foot_site[leg]]) < 0.0:   # 뒤꿈치 쪽 접촉점
+                    heel[leg] += abs(self._f6[0])
+        self._heel_force = heel
         return contact, count, normal, force
 
     def read_state(self) -> RobotState:
@@ -498,7 +505,7 @@ class MitModel:
             q_arm=d.qpos[self.arm_qadr].copy(), qd_arm=d.qvel[self.arm_dof].copy(),
             foot_pos_W=foot_pos, foot_vel_W=foot_vel, foot_R_W=foot_R,
             foot_contact=contact, foot_normal_force=normal, reduced=reduced,
-            yaw_rate_W=yaw_rate, foot_force_W=force, foot_contact_count=count)
+            yaw_rate_W=yaw_rate, foot_force_W=force, foot_contact_count=count, foot_heel_force=self._heel_force.copy())
 
     # ------------------------------------------------------------------------------------------------------------
     # D4: 다리 동역학 (aux 모델 대신 전체 모델 scratch)
