@@ -130,7 +130,7 @@ def parse_variant(s: str | None) -> dict:
             kw["stand_yaw_hold"] = bool(int(v))
         elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
             kw["arm_swing"] = float(v)
-        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm", "zoff", "rsc", "fzmax", "mdt", "wsh", "wdum", "pitchtraj", "toeoff", "toeeps", "toepin", "latsway", "holdclip", "pitchref", "ecgate", "toetraj", "toesense", "toeang"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
+        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm", "zoff", "rsc", "fzmax", "mdt", "wsh", "wdum", "pitchtraj", "toeoff", "toeeps", "toepin", "latsway", "holdclip", "pitchref", "ecgate", "toetraj", "toesense", "toeang", "swasym"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
             path = {"tdz": "swing.touchdown_z", "fref": "mpc.force_ref_weight", "tswing": "timing.swing",
                     "tcycle": "timing.cycle", "hor": "timing.horizon", "kdz": "swing.kd_zeta",
                     "raii": "swing.raibert_int_gain", "psioff": "swing.psi_offset_scale",
@@ -175,6 +175,7 @@ def parse_variant(s: str | None) -> dict:
                     "holdclip": "swing.stance_yaw_hold_torsion_clip",   # holdclip=s: 디딤 발 yaw hold 뒤 비틀림을 두 점 마찰 구간 (× s) 으로 (기본 0 = 끔, Q&A 10/6 Q50)
                     "pitchref": "mpc.pitch_ref_per_speed",      # pitchref=a: MPC pitch 참조 += a × 명령 전진 속도 [rad per m/s] (기본 0, Q&A 10/6 Q51)
                     "ecgate": "contact_manager.early_contact_min_swing_phase",   # ecgate=f: 스윙 경과 f 전의 접촉은 조기 디딤으로 안 봄 (기본 0, Q&A 10/6 Q61)
+                    "swasym": "swing.xy_accel_fraction",       # swasym=ta: 수평 스윙을 가속 빠르게 · 감속 완만하게 (가속 구간 비율 ta, 기본 0, Q&A 10/6 Q85)
                     "toesense": "mpc.toe_sense_mode",          # toesense=1 발목 각 · 2 뒤꿈치 힘 · 3 둘 중 하나: 실제 상태로 발끝 모드 (기본 0, Q&A 10/6 Q83)
                     "toeang": "mpc.toe_sense_ankle",           # toeang=a: toesense 1 · 3 의 발목 각 문턱 [rad] (q ≤ −a, 기본 0.76)
                     "toetraj": "swing.toe_height_trajectory",   # toetraj=1: 스윙 높이 궤적을 발끝에 (pitchtraj 와 함께, 기본 0, Q&A 10/6 Q61)

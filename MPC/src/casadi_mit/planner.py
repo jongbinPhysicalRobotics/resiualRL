@@ -619,6 +619,20 @@ def _blend5(s: float):
     return (s2 * s * (10.0 - 15.0 * s + 6.0 * s2), 30.0 * s2 * (1.0 - 2.0 * s + s2), 60.0 * s * (1.0 - 3.0 * s + 2.0 * s2))
 
 
+def _blend_asym(s: float, ta: float):
+    """변형 swasym=ta (Q&A 10/6 Q85): 가속은 빠르게 · 감속은 길고 완만하게 하는 비대칭 수평 blend (b, b', b'').
+    속도 v(s) = v_p·sin(πs / 2ta) (0 ≤ s ≤ ta),  v_p·cos(π(s − ta) / 2(1 − ta)) (ta < s ≤ 1),  v_p = π/2 (∫v = 1, 유도).
+    양 끝 속도 0, 시작 가속 π²/(4ta), 끝 감속 −π²/(4(1 − ta)) (3 차 smoothstep 은 ±6). ta = 0.41 이면 시작 6.0 · 끝 −4.2."""
+    vp = 0.5 * math.pi
+    td = 1.0 - ta
+    if s <= ta:
+        w = 0.5 * math.pi / ta
+        return vp * (1.0 - math.cos(w * s)) / w, vp * math.sin(w * s), vp * w * math.cos(w * s)
+    w = 0.5 * math.pi / td
+    u = s - ta
+    return vp / (0.5 * math.pi / ta) + vp * math.sin(w * u) / w, vp * math.cos(w * u), -vp * w * math.sin(w * u)
+
+
 _PROFILE_CACHE = {}
 
 
@@ -671,6 +685,7 @@ class SwingFootTrajectory:
         self.active = False
         self.xy_profile = 0.0                      # 변형 swprof: 0 = cubic smoothstep (reference), r > 0 = 저가속 blend
         self.blend_order = 3                       # 변형 swq (Q&A 10/6 Q3): 3 = cubic smoothstep (기본), 5 = 5 차 최소 저크
+        self.xy_accel_frac = 0.0                   # 변형 swasym (Q&A 10/6 Q85): 0 = 끔, ta > 0 = 비대칭 수평 blend (가속 구간 비율)
 
     def reset(self, p_init, p_final, height: float, T: float) -> None:
         """ref: :6-21."""
@@ -732,7 +747,9 @@ class SwingFootTrajectory:
         s = min(max(self.phase(), 0.0), 1.0)
         ds = (1.0 / self.T) if self.T > 0.0 else 0.0
         d2s = 0.0
-        if self.xy_profile > 0.0:                  # 변형 swprof (Q&A 9/30 Q2): 최대 가속 낮은 수평 blend
+        if 0.0 < self.xy_accel_frac < 1.0:          # 변형 swasym (Q&A 10/6 Q85): 비대칭 수평 blend
+            b, bd, bdd = _blend_asym(s, self.xy_accel_frac)
+        elif self.xy_profile > 0.0:                # 변형 swprof (Q&A 9/30 Q2): 최대 가속 낮은 수평 blend
             sg, B, Bd, Bdd = _jerk_limited_profile(self.xy_profile)
             b, bd, bdd = float(np.interp(s, sg, B)), float(np.interp(s, sg, Bd)), float(np.interp(s, sg, Bdd))
         else:

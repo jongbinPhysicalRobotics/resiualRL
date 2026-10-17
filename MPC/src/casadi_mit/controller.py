@@ -181,6 +181,7 @@ class MitController:
         for rt_ in self.legs:                                  # 변형 swprof (Q&A 9/30 Q2): 저가속 수평 스윙 blend
             rt_.traj.xy_profile = float(cfg_get(self.cfg, "swing.xy_profile_ramp", 0.0) or 0.0)
             rt_.traj.blend_order = int(float(cfg_get(self.cfg, "swing.blend_order", 3) or 3))   # 변형 swq (Q&A 10/6 Q3)
+            rt_.traj.xy_accel_frac = float(cfg_get(self.cfg, "swing.xy_accel_fraction", 0.0) or 0.0)   # 변형 swasym (Q&A 10/6 Q85)
         for leg in LEGS:
             rt = self.legs[leg]
             rt.was_in_stance = bool(self.gait.contact(leg, t))
