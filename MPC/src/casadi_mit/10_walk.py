@@ -130,7 +130,7 @@ def parse_variant(s: str | None) -> dict:
             kw["stand_yaw_hold"] = bool(int(v))
         elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
             kw["arm_swing"] = float(v)
-        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm", "zoff", "rsc", "fzmax", "mdt", "wsh", "wdum", "pitchtraj", "toeoff", "toeeps", "toepin", "latsway", "holdclip", "pitchref", "ecgate", "toetraj", "toesense", "toeang", "swasym"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
+        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm", "zoff", "rsc", "fzmax", "mdt", "wsh", "wdum", "pitchtraj", "toeoff", "toeeps", "toepin", "latsway", "holdclip", "pitchref", "ecgate", "toetraj", "toesense", "toeang", "swasym", "htoe", "htoes", "htoev", "htoepin", "htoeq", "htoep", "htoepk", "htoekp", "htoekd", "hstk", "hstk1", "hstkpin"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
             path = {"tdz": "swing.touchdown_z", "fref": "mpc.force_ref_weight", "tswing": "timing.swing",
                     "tcycle": "timing.cycle", "hor": "timing.horizon", "kdz": "swing.kd_zeta",
                     "raii": "swing.raibert_int_gain", "psioff": "swing.psi_offset_scale",
@@ -179,6 +179,18 @@ def parse_variant(s: str | None) -> dict:
                     "toesense": "mpc.toe_sense_mode",          # toesense=1 발목 각 · 2 뒤꿈치 힘 · 3 둘 중 하나: 실제 상태로 발끝 모드 (기본 0, Q&A 10/6 Q83)
                     "toeang": "mpc.toe_sense_ankle",           # toeang=a: toesense 1 · 3 의 발목 각 문턱 [rad] (q ≤ −a, 기본 0.76)
                     "toetraj": "swing.toe_height_trajectory",   # toetraj=1: 스윙 높이 궤적을 발끝에 (pitchtraj 와 함께, 기본 0, Q&A 10/6 Q61)
+                    "htoe": "mpc.heel_off_fraction",           # htoe=s2: 의도한 뒤꿈치 듦 — 디딤 경과 s2 부터 발끝 한 점 일정 (기본 0 = 끔, Q&A 10/6 Q90)
+                    "htoes": "mpc.heel_off_speed_slope",       # htoes=k: s2 = htoe − k·max(명령 전진 − 0.6, 0) (기본 0, 최소 0.2)
+                    "htoev": "mpc.heel_off_min_speed",         # htoev=v: htoe 는 명령 전진 속도 ≥ v 일 때만 (기본 0.3 m/s)
+                    "htoepin": "mpc.heel_off_pin",             # htoepin=c: 발끝 구간 칸의 CoP 를 [c·l, l] 에 묶음 (기본 0.9)
+                    "htoeq": "swing.heel_off_ankle_floor",     # htoeq=q: 발끝 구간 발목 하한 [rad] (기본 −0.75, 관절 한계 −0.80)
+                    "htoep": "swing.heel_off_pitch_end",       # htoep=φ: 발끝 구간 발 pitch 궤적의 이륙 각 [rad] (+ = 발끝 아래, 기본 0.2)
+                    "htoepk": "swing.heel_off_pitch_speed",    # htoepk=k: 이륙 각 += k·(명령 전진 속도 − 1.0) [rad per m/s] (기본 0)
+                    "htoekp": "swing.heel_off_kp",             # htoekp · htoekd: 발끝 구간 발목 PD 이득 (기본 300 N·m/rad · 6 N·m·s/rad)
+                    "htoekd": "swing.heel_off_kd",
+                    "hstk": "swing.heel_strike_angle",         # hstk=θ: 뒤꿈치 착지 — 스윙 끝 발끝을 θ [rad] 들고, 디딤 0 ~ s1 은 뒤꿈치 한 점 (기본 0 = 끔)
+                    "hstk1": "mpc.heel_strike_fraction",       # hstk1=s1: 뒤꿈치 한 점 구간 (디딤 경과, 기본 0.1)
+                    "hstkpin": "mpc.heel_strike_pin",          # hstkpin=c: 그 칸의 CoP 를 [−l, −c·l] 에 묶음 (기본 0.9)
                     "attank": "swing.attitude_ankle_only",    # attank=1: 스윙 발 pitch 자세 모멘트를 발목에만 (Q&A 10/6 Q3)
                     "swq": "swing.blend_order"}[k]             # swq=5: 스윙 궤적 5 차 최소 저크 (기본 3 차 smoothstep)
             kw.setdefault("raw_over", {})[path] = float(v)

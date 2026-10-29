@@ -44,8 +44,10 @@ def run(vx, vy, wz, seconds, var):
                     mujoco.mj_contactForce(m, d, c, f6)
                     fz2[1 if Rf[:, 0].dot(con.pos - p0) > 0 else 0] += abs(f6[0])
                 ph = ctl.gait.phase(leg, s.t, ctl.clock) * ctl.clock.cycle / ctl.gait.stance
+                hd = getattr(ctl, "heel_off_dbg", [(0.0, 0.0, np.nan, np.nan)] * 2)[leg]   # 변형 htoe (Q&A 10/6 Q90)
                 rows.append([ph, float(getattr(ctl.mpc, "late0", np.zeros(2))[leg]), -My / max(Fz, 1e-6) / l, Fz,
-                             float(fz2[0] > 5), float(fz2[1] > 5), (fz2[1] - fz2[0]) / max(fz2.sum(), 1e-6), d.qpos[qadr[leg]], fz2[0], fz2[1]])
+                             float(fz2[0] > 5), float(fz2[1] > 5), (fz2[1] - fz2[0]) / max(fz2.sum(), 1e-6), d.qpos[qadr[leg]], fz2[0], fz2[1],
+                             hd[0], hd[1], hd[2], hd[3]])
         model.write_torque(tl, ta); mujoco.mj_step(m, d)
         if W._fell(d):
             print("fell", d.time); break
@@ -57,7 +59,9 @@ def run(vx, vy, wz, seconds, var):
             print(f"디딤 {lo:.1f}  풀림 {r[k, 1].mean():.2f}  MPC CoP x/l {r[k, 2].mean():+.2f} (≥0.79 {np.mean(r[k, 2] >= 0.79):.2f},"
                   f" ≤−0.5 {np.mean(r[k, 2] <= -0.5):.2f})  | 실제 뒤꿈치 {r[k, 4].mean():.2f} 발끝 {r[k, 5].mean():.2f}"
                   f" CoP x/l {r[k, 6].mean():+.2f}  발목 {r[k, 7].mean():+.2f} rad (한계 닿음 {np.mean(np.abs(r[k, 7]) >= 0.79):.2f})"
-                  f"  뒤꿈치 힘 몫 실제 {r[k, 8].sum() / max(r[k, 8].sum() + r[k, 9].sum(), 1e-6):.2f} · MPC {np.mean((1 - np.clip(r[k, 2], -1, 1)) / 2):.2f}")
+                  f"  뒤꿈치 힘 몫 실제 {r[k, 8].sum() / max(r[k, 8].sum() + r[k, 9].sum(), 1e-6):.2f} · MPC {np.mean((1 - np.clip(r[k, 2], -1, 1)) / 2):.2f}"
+                  + (f"  | htoe 켜짐 {r[k, 10].mean():.2f} 하한 쪽 {r[k, 11].mean():.2f} 발 pitch 목표 {np.nanmean(r[k, 12]):+.2f}"
+                     f" 실제 {np.nanmean(r[k, 13]):+.2f} rad" if r[k, 10].any() else ""))
     print(f"디딤 전체 뒤꿈치 수직 충격량 몫: 실제 {r[:, 8].sum() / max(r[:, 8].sum() + r[:, 9].sum(), 1e-6):.2f} · MPC 계획 {np.mean((1 - np.clip(r[:, 2], -1, 1)) / 2):.2f}"
           f"  (뒤꿈치 닿은 틱 {r[:, 4].mean():.2f}, 발목 한계 닿은 틱 {np.mean(np.abs(r[:, 7]) >= 0.79):.2f})")
 

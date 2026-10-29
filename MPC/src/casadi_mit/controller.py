@@ -191,6 +191,7 @@ class MitController:
         self._toe_latch = np.zeros(2, dtype=bool)                  # 변형 toesense (Q&A 10/6 Q83): 이번 디딤에서 발끝 모드로 바뀐 다리
         self._heel_seen = np.zeros(2, dtype=bool)                  #   이번 디딤에서 뒤꿈치가 하중을 받은 적이 있나
         self._toe_td_t = np.full(2, -1.0)                          #   이번 디딤 시작 (active 가 켜진) 시각
+        self.heel_off_dbg = [(0.0, 0.0, np.nan, np.nan), (0.0, 0.0, np.nan, np.nan)]   # 변형 htoe: (켜짐, 하한 쪽, φ_ref, φ)
         self.last_ref = None
         self.iteration = 0
         self.last_mpc_iteration = 0
@@ -386,8 +387,12 @@ class MitController:
                 half = 0.5 * float(self.clock.cycle)               # — O1 (주기 원점) 은 두 다리의 어긋남이 달라 좌우 비대칭 (9/26 Q7)
                 t_tab = self.clock.t0 + (half if t - self.clock.t0 >= half else 0.0)
             steps = self.gait.horizon_steps(self.clock, override, t_now=t_tab)
-            if self.mode == "walking" and cfg_get(self.cfg, "mpc.toe_off_fraction", None):
+            if self.mode == "walking" and (cfg_get(self.cfg, "mpc.toe_off_fraction", None)
+                                           or cfg_get(self.cfg, "mpc.heel_off_fraction", None)
+                                           or cfg_get(self.cfg, "swing.heel_strike_angle", None)):
                 self._tag_stance_fraction(steps, t, t_tab, len(override) if override else 0)
+            self.mpc.heel_off_on = self._heel_off_on()             # 변형 htoe (Q&A 10/6 Q90): 전진 명령일 때만
+            self.mpc.heel_off_s2 = self._heel_off_s2()
             seed = x0.copy()
             dz = self.wb_dz or 0.0                                 # 변형 wbcom: 전신 CoM 은 몸통 CoM 보다 dz 낮다
             dz -= float(cfg_get(self.cfg, "mpc.height_ref_offset", 0.0) or 0.0)   # 변형 zoff (Q&A 10/6 Q6): 높이 참조 + zoff [m]
@@ -534,9 +539,82 @@ class MitController:
         if not cfg_get(self.cfg, "swing.pitch_trajectory_fraction", None) or not np.isfinite(rt.pit_lo):
             return 0.0, 0.0
         s = min(max((float(t) - rt.t_plo) / rt.T_pit, 0.0), 1.0)
-        bias = rt.pit_lo * (1.0 - (10 * s**3 - 15 * s**4 + 6 * s**5))
-        rate = rt.pit_lo * (30 * s**2 - 60 * s**3 + 30 * s**4) / rt.T_pit if s < 1.0 else 0.0
+        # 변형 hstk (Q&A 10/6 Q90): 목표를 수평 대신 발끝 위 θ_hs 로 (보정각 + = 발끝을 내려야 수평) — e_ref = e_lo·(1 − b) + θ_hs·b
+        e_end = self._heel_strike_angle() if self._heel_off_on() else 0.0
+        bias = rt.pit_lo * (1.0 - (10 * s**3 - 15 * s**4 + 6 * s**5)) + e_end * (10 * s**3 - 15 * s**4 + 6 * s**5)
+        rate = (rt.pit_lo - e_end) * (30 * s**2 - 60 * s**3 + 30 * s**4) / rt.T_pit if s < 1.0 else 0.0
         return bias, rate
+
+    def _heel_off_on(self) -> bool:
+        """변형 htoe · hstk (Q&A 10/6 Q89 · Q90): 걷기 + 명령 전진 속도 ≥ htoev (기본 0.3 m/s) 일 때만 의도한 뒤꿈치 듦 · 뒤꿈치 착지를
+        켠다. 후진 · 옆 · 제자리는 지금 (A41) 그대로."""
+        on = float(cfg_get(self.cfg, "mpc.heel_off_fraction", 0.0) or 0.0) > 0.0 or self._heel_strike_angle() > 0.0
+        v_min = float(cfg_get(self.cfg, "mpc.heel_off_min_speed", 0.3) or 0.3)
+        return self.mode == "walking" and on and float(self.filtered.x_dot) >= v_min
+
+    def _heel_strike_angle(self) -> float:
+        """변형 hstk: 착지 때 발끝을 드는 각 θ_hs [rad] (0 = 끔)."""
+        return float(cfg_get(self.cfg, "swing.heel_strike_angle", 0.0) or 0.0)
+
+    def _heel_off_s2(self) -> float:
+        """변형 htoe: 뒤꿈치 드는 디딤 경과 s2 = htoe − htoes·max(명령 전진 속도 − 0.6, 0), 0.2 아래로는 안 내린다.
+        빠를수록 엉덩이가 발목 앞으로 일찍 나가 평평한 발목이 한계에 일찍 닿는다 (Q&A 10/6 Q68 · Q89)."""
+        s2 = float(cfg_get(self.cfg, "mpc.heel_off_fraction", 0.0) or 0.0)
+        k = float(cfg_get(self.cfg, "mpc.heel_off_speed_slope", 0.0) or 0.0)
+        return max(0.2, s2 - k * max(float(self.filtered.x_dot) - 0.6, 0.0)) if s2 > 0.0 else 0.0
+
+    def _stance_frac_now(self, leg, t) -> float:
+        """지금 시각의 일정상 디딤 경과 비율 (_tag_stance_fraction 의 지금 접촉 칸과 같은 규칙)."""
+        st_T, sw_T = float(self.gait.stance), float(self.gait.swing)
+        p = self.gait.phase(leg, t, self.clock) * float(self.clock.cycle)
+        return p / st_T if p < st_T else (0.0 if p >= st_T + 0.5 * sw_T else 1.0)
+
+    def _heel_off_ankle_torque(self, state, leg, dyn, t) -> float:
+        """변형 htoe · hstk: 발끝 한 점 구간 (디딤 경과 ≥ s2) · 뒤꿈치 한 점 구간 (< s1) 의 발목 토크 — MPC 렌치 (Jᵀ[F; M]) 위에 더한다.
+        뒤꿈치 구간은 φ_ref = −θ_hs·(1 − b(경과/s1)) (발끝 위에서 평평하게 내림), 나머지는 아래 (발끝 구간) 와 같다.
+        발 pitch φ (+ = 발끝 아래 = 뒤꿈치 듦) 를 궤적 φ_traj = φ_end·b(s), s = (경과 − s2)/(1 − s2) (최소 저크) 로 따라가게 하되,
+        발목 q 가 하한 q_floor (기본 −0.75, 관절 한계 −0.80) 아래로 가지 않게 한다. 평평한 발의 발목 = −(정강이 앞 기울기) 라
+        φ = q + θ_정강이 → 하한을 지키는 φ 는 φ − q + q_floor. 두 목표 중 큰 쪽을 쓴다 (하한 쪽이면 발목 각 PD).
+        발목 + 토크 = 발끝 아래로 돌림 (관절 축 +y, 코드 사실). 구간 밖 · 꺼짐이면 0. self.heel_off_dbg[leg] 에 (켜짐, 하한 쪽, φ_ref, φ)."""
+        self.heel_off_dbg[leg] = (0.0, 0.0, np.nan, np.nan)
+        if not self._heel_off_on():
+            return 0.0
+        s2 = self._heel_off_s2()
+        th_hs = self._heel_strike_angle()
+        s1 = float(cfg_get(self.cfg, "mpc.heel_strike_fraction", 0.1) or 0.1) if th_hs > 0.0 else 0.0
+        fr = self._stance_frac_now(leg, t)
+        heel_phase = s1 > 0.0 and fr < s1                     # 변형 hstk: 뒤꿈치 한 점 구간 — 발끝 위 θ_hs 에서 평평하게 내림
+        if not heel_phase and not (s2 > 0.0 and fr >= s2):
+            return 0.0
+        R = np.asarray(state.foot_R_W[leg], dtype=float)
+        fy_, fz_ = R[:, 1] / np.linalg.norm(R[:, 1]), R[:, 2] / np.linalg.norm(R[:, 2])
+        ez = np.array([0.0, 0.0, 1.0])
+        phi = -float(np.arctan2(fy_.dot(np.cross(fz_, ez)), fz_.dot(ez)))   # = −(swing_attitude_torque 의 pitch 보정각)
+        w_f = np.asarray(state.torso_angvel_W, dtype=float) + np.asarray(dyn.Jw) @ np.asarray(state.qd_leg[leg], dtype=float)
+        phid = float(fy_.dot(w_f))
+        q_a = float(np.asarray(state.q_leg, dtype=float).reshape(2, 5)[leg, 4])
+        qd_a = float(np.asarray(state.qd_leg[leg], dtype=float)[4])
+        q_fl = float(cfg_get(self.cfg, "swing.heel_off_ankle_floor", -0.75))
+        ph_end = float(cfg_get(self.cfg, "swing.heel_off_pitch_end", 0.2))
+        ph_end += float(cfg_get(self.cfg, "swing.heel_off_pitch_speed", 0.0) or 0.0) * (float(self.filtered.x_dot) - 1.0)   # htoepk
+        kp = float(cfg_get(self.cfg, "swing.heel_off_kp", 300.0))
+        kd = float(cfg_get(self.cfg, "swing.heel_off_kd", 6.0))
+        if heel_phase:                                         # φ_ref = −θ_hs·(1 − b(fr/s1))
+            sv = min(max(fr / s1, 0.0), 1.0)
+            T_ph = max(s1 * float(self.gait.stance), 1e-3)
+            ph_ref = -th_hs * (1.0 - (10 * sv**3 - 15 * sv**4 + 6 * sv**5))
+            ph_rate = th_hs * (30 * sv**2 - 60 * sv**3 + 30 * sv**4) / T_ph if sv < 1.0 else 0.0
+        else:
+            sv = min(max((fr - s2) / max(1.0 - s2, 1e-6), 0.0), 1.0)
+            T_ph = max((1.0 - s2) * float(self.gait.stance), 1e-3)
+            ph_ref = ph_end * (10 * sv**3 - 15 * sv**4 + 6 * sv**5)
+            ph_rate = ph_end * (30 * sv**2 - 60 * sv**3 + 30 * sv**4) / T_ph if sv < 1.0 else 0.0
+        if ph_ref - phi >= q_fl - q_a:                         # 궤적 쪽
+            e_p, e_d, floor = ph_ref - phi, ph_rate - phid, 0.0
+        else:                                                  # 발목 하한 쪽
+            e_p, e_d, floor = q_fl - q_a, -qd_a, 1.0
+        self.heel_off_dbg[leg] = (1.0, floor, phi + e_p, phi)
+        return kp * e_p + kd * e_d
 
     def _toe_traj_on(self) -> bool:
         return bool(float(cfg_get(self.cfg, "swing.toe_height_trajectory", 0) or 0)) and \
@@ -670,6 +748,8 @@ class MitController:
                     tmpl = getattr(self.mpc, "template_walk", self.mpc.template)
                     if bool(getattr(self.mpc, "late0", np.zeros(2, dtype=bool))[leg]):   # 변형 toeoff: 첫 칸이 풀린 다리
                         tmpl = self.mpc.template_toe
+                    elif bool(getattr(self.mpc, "early0", np.zeros(2, dtype=bool))[leg]):   # 변형 hstk: 첫 칸이 뒤꿈치 한 점
+                        tmpl = self.mpc.template_heel
                     lp = (tmpl, float(cfg_get(cfg, "mpc.foot_half_length")), resolved_foot_yaw(fy_[leg]), lp_mode)
                 u_use = self.u_hold
                 if float(cfg_get(cfg, "mpc.input_interpolation", 0) or 0) and getattr(self, "_u_next", None) is not None:
@@ -680,6 +760,8 @@ class MitController:
                     u_use = self.u_hold + a_ * (self._u_next - self.u_hold)
                 tau[leg] = walking_stance_torque(dyn, state, leg, u_use, self._alpha(leg), rt.touchdown_yaw, cfg,
                                                  yaw_hold_gains=gains, line_proj=lp)   # 변형 lproj (Q&A 9/30 Q11)
+                if float(cfg_get(cfg, "mpc.heel_off_fraction", 0.0) or 0.0) > 0.0 or self._heel_strike_angle() > 0.0:   # 변형 htoe · hstk
+                    tau[leg][4] += self._alpha(leg) * self._heel_off_ankle_torque(state, leg, dyn, t)
                 kd_s = float(cfg_get(cfg, "swing.stance_joint_damping", 0.0) or 0.0)   # 변형 sjd (Q&A 9/30 Q13)
                 if kd_s > 0.0 and bool(np.asarray(state.foot_contact)[leg]):   # 실제로 닿아 있을 때만 (예정 착지 전 공중 발은 제외)
                     tau[leg] = tau[leg] + self._alpha(leg) * stance_foot_damping(
