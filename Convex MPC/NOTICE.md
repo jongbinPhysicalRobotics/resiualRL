@@ -2,7 +2,8 @@
 
 이 폴더의 컨트롤러 구조 (보행 상태기계, 걸음 시간표, 접촉 관리, 착지점 계획, 스윙 · 디딤 다리 토크, condensed SRB MPC 조립) 는
 아래 C++ 구현을 파이썬으로 옮긴 뒤 고쳐 쓴 것입니다.
-그 위에 더한 것은 OA-MPC 선 접촉 제약, 해 자르기, 고정 반복 ADMM, 착지 이득 조정, 긴 걸음 주기 등 A30 설정입니다 (Q&A 9/26 ~ 10/1).
+그 위에 더한 것은 OA-MPC 선 접촉 제약, 해 자르기, 고정 반복 ADMM, 착지 이득 조정, 긴 걸음 주기 등 A30 설정 (Q&A 9/26 ~ 10/1) 과,
+warm start 반 칸 · 스윙 발 pitch 궤적 · yaw hold 비틀림 제한 · 서기 전용 ρ · 팔 흔들기 등 A41 설정입니다 (Q&A 10/6 ~ 10/17).
 
 - **convex-mpc-biped** — https://github.com/ispaik06/convex-mpc-biped (commit 44e9618)
 

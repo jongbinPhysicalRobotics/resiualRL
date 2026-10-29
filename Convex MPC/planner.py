@@ -249,10 +249,7 @@ class BodyTarget:
 # SwingFootPlanner
 # ---------------------------------------------------------------------------
 class SwingFootPlanner:
-    """착지점 계획. 매 control tick (walking) 한 번 desired_foot_positions() 호출.
 
-    진단용 속성 (읽기만): stop_active, stop_just_activated, last_updated (2,) bool.
-    """
 
     def __init__(self, cfg, raibert_gain: float = 0.0, raibert_max: float = 0.10,
                  ypos_gain: float = 0.0, ypos_max: float = 0.05):
@@ -387,7 +384,7 @@ class SwingFootPlanner:
     def touchdown_target(self, leg, px, py, psi_dot, stop_recenter, state, x0, gait, clock, t) -> np.ndarray:
         """몸 속도 · half-stance 미리보기로 정한 착지점 (월드).
 
-        planned_B = Rz(yaw0)^T·Rz(yaw0 + ½ψ̇Tp)·v_B·Tp + Rz(ψ̇·Trem)·off_B,  target = center + Rz(yaw0)·planned_B, z=-0.005.
+        planned_B = Rz(yaw0)^T·Rz(yaw0 + ½ψ̇Tp)·v_B·Tp + Rz(ψ̇·Trem)·off_B,
         """
         v_B = (px, py, 0.0)
         Tp = half_stance_preview_time(_norm2(px, py), self.cfg)

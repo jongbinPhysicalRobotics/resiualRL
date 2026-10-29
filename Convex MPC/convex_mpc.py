@@ -1,7 +1,7 @@
 """Convex MPC — MIT Humanoid (MuJoCo) 걷기 실행기 (발표용).
 
 Di Carlo SRB convex MPC (상태 13 · 입력 12 · 지평 22 × 0.02 s = 0.44 s · 100 Hz) + OA-MPC 선 접촉 발 제약.
-설정은 A30 (Q&A 9/30 Q23, 2026-10-01 발표 설정) — 숫자는 전부 mit_controller.yaml 에 있다 (바꾼 줄마다 원래 값 주석).
+설정은 A41 (Q&A 10/6 Q76 · Q86, MPC 최종 설정 — A30 발표 설정에서 10 가지를 바꿈) — 숫자는 전부 mit_controller.yaml 에 있다 (바꾼 줄마다 원래 값 주석).
 여기서는 속도 명령과 gait (걷기 / 서기) 만 고른다.
 엔진 (engine.py 와 나머지 모듈) 은 MPC/src/casadi_mit 의 복사본이다. 디버깅 · 실험은 그쪽에서 한다.
 
@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config
 import engine
 
-# 설정은 전부 mit_controller.yaml (A30) 에 있다. yaml 경로가 있는 값은 engine 이 그대로 읽고,
+# 설정은 전부 mit_controller.yaml (A41) 에 있다. yaml 경로가 있는 값은 engine 이 그대로 읽고,
 # 생성 인자 (profile · fix · foot · rai · ypath · armsw · OSQP) 는 yaml 의 launcher: 절을 여기서 읽어 넘긴다.
 _MERGE = ("osqp_settings", "raw_over", "swing_over", "q_state")   # --var 가 dict 로 주는 인자 — 덮지 않고 합친다
 
@@ -48,11 +48,13 @@ def launcher_kwargs() -> dict:
 
 
 def build_kwargs(gait: str, yawlead: float | None = None, push: str | None = None, extra: str | None = None) -> dict:
-    """yaml (A30) 위에 실행기 옵션을 얹는다. yawlead=None 이면 yaml 값 (swing_foot_yaw_lead_scale)."""
+    """yaml (A41) 위에 실행기 옵션을 얹는다. yawlead=None 이면 yaml 값 (swing_foot_yaw_lead_scale)."""
     kw = launcher_kwargs()
     if yawlead is not None:
         kw["yaw_lead"] = float(yawlead)
-    if push:
+    if push and "," in push:                                     # 외란 여러 개 (--record 전용): 'Fx:Fy:t0:dur,Fx:Fy:t0:dur'
+        kw["pushes"] = [engine.parse_variant(f"push={p_}")["push"] for p_ in push.split(",") if p_.strip()]
+    elif push:
         kw.update(engine.parse_variant(f"push={push}"))
     for k, v in engine.parse_variant(extra).items():
         kw[k] = {**kw[k], **v} if k in _MERGE and isinstance(kw.get(k), dict) else v
@@ -89,6 +91,7 @@ def record(vx, vy, wz, seconds, out, *, fps=50, size=(1280, 720), clean=False, h
     from PIL import Image, ImageDraw, ImageFont
 
     push, push_repeat = kw.pop("push", None), float(kw.pop("push_repeat", 0.0) or 0.0)
+    pushes = list(kw.pop("pushes", None) or ([push] if push is not None else []))   # (Fx, Fy, t0, dur) 목록
     pos = dict(solver="osqp", armature=True, profile="const", markers=False, stand=False, friction_scale=1.0,
                fsm_double_update=True)
     for k in list(kw):
@@ -122,10 +125,13 @@ def record(vx, vy, wz, seconds, out, *, fps=50, size=(1280, 720), clean=False, h
             tau_leg, tau_arm = ctl.tick()
             model.write_torque(tau_leg, tau_arm)
             F_B = None
-            if push is not None:
-                if engine._push_active(push, push_repeat, d.time - t_meas0):
-                    F_B = (push[0], push[1])
-                    d.xfrc_applied[model.base_body, 0:3] = engine._push_world(push[0], push[1], ctl.state.yaw_unwrapped)
+            if pushes:
+                for p_ in pushes:                                # 하나면 engine.headless 와 같다 (반복 주기 포함)
+                    if engine._push_active(p_, push_repeat, d.time - t_meas0):
+                        F_B = (p_[0], p_[1])
+                        break
+                if F_B is not None:
+                    d.xfrc_applied[model.base_body, 0:3] = engine._push_world(F_B[0], F_B[1], ctl.state.yaw_unwrapped)
                 else:
                     d.xfrc_applied[model.base_body, :] = 0.0
             mujoco.mj_step(m, d)
@@ -162,7 +168,9 @@ def record(vx, vy, wz, seconds, out, *, fps=50, size=(1280, 720), clean=False, h
                          f"cmd   vx {f.x_dot:+.2f}  vy {f.y_dot:+.2f} m/s  wz {f.psi_dot:+.2f} rad/s",
                          f"meas  vx {avg[0]:+.2f}  vy {avg[1]:+.2f} m/s  wz {avg[2]:+.2f} rad/s"]
                 if F_B is not None:
-                    lines.append(f"push  {np.hypot(*F_B):.0f} N")
+                    ang = np.degrees(np.arctan2(F_B[1], F_B[0]))   # 몸 진행 방향 기준: 0 앞 · 90 왼 · ±180 뒤 · −90 오른
+                    side = ("front", "left", "back", "right")[int(((ang + 45.0) % 360.0) // 90.0)]
+                    lines.append(f"push  {np.hypot(*F_B):.0f} N  {side}")
                 if t_fell is not None:
                     lines.append("FELL")
                 pil = Image.fromarray(img)
@@ -180,20 +188,21 @@ def record(vx, vy, wz, seconds, out, *, fps=50, size=(1280, 720), clean=False, h
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Convex MPC (MIT Humanoid, A30 설정) — 속도와 gait 만 고른다.",
+    ap = argparse.ArgumentParser(description="Convex MPC (MIT Humanoid, A41 설정) — 속도와 gait 만 고른다.",
                                  formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split("\n\n", 2)[2])
-    ap.add_argument("--vx", type=float, default=0.0, help="전진 속도 [m/s] (뒤로는 음수, 시험 범위 −1.0 ~ 1.0)")
-    ap.add_argument("--vy", type=float, default=0.0, help="옆 속도 [m/s] (왼쪽 +, 시험 범위 ±0.8)")
-    ap.add_argument("--wz", type=float, default=0.0, help="회전 속도 [rad/s] (반시계 +, 시험 범위 ±2.5)")
+    ap.add_argument("--vx", type=float, default=0.0, help="전진 속도 [m/s] (뒤로는 음수, 120 s 완주 범위 −1.1 ~ 1.5)")
+    ap.add_argument("--vy", type=float, default=0.0, help="옆 속도 [m/s] (왼쪽 +, 120 s 완주 범위 +0.65 / −0.7)")
+    ap.add_argument("--wz", type=float, default=0.0, help="회전 속도 [rad/s] (반시계 +, 제자리 120 s 완주 3.0)")
     ap.add_argument("--gait", default="walk", choices=["walk", "stand"], help="walk = 걷기 (기본) / stand = 제자리 서기")
     ap.add_argument("--seconds", type=float, default=120.0, help="걷기 (서기) 시간 [s] (기본 120 = 완주 판정 기준)")
     ap.add_argument("--headless", action="store_true", help="뷰어 없이 돌리고 PASS / FAIL 과 지표를 출력")
     ap.add_argument("--clean", action="store_true", help="뷰어의 참조 오버레이 (스윙 궤적 · 착지 목표 · CoM 참조) 끄기")
     ap.add_argument("--yawlead", type=float, default=None, choices=[0.0, 0.5, 1.0],
-                    help="회전 선행 (기본 = yaml 0.5). 0 이면 제자리 2.5 rad/s 가 넘어진다 (A30 의 알려진 한계)")
+                    help="회전 선행 (기본 = yaml 1.0). 0 이면 제자리 2.5 rad/s 가 넘어진다 (알려진 한계)")
     ap.add_argument("--push", default=None, metavar="Fx:Fy:t0:dur",
                     help="스크립트 외란 [N, N, s, s] — 진행 방향 기준, 걷기 시작 (서기면 0) 뒤 t0 에 몸통 CoM 에. "
-                         "음수로 시작하면 --push=-30:0:5:0.2 처럼 = 로 붙인다")
+                         "음수로 시작하면 --push=-30:0:5:0.2 처럼 = 로 붙인다. "
+                         "--record 에서는 쉼표로 여러 개: --push 30:0:5:0.2,-30:0:8:0.2")
     ap.add_argument("--var", default=None, help="고급: yaml 위에 덮어쓸 변형 키 'k=v,k=v' (engine.parse_variant 문법)")
     ap.add_argument("--record", default=None, metavar="FILE.mp4",
                     help="뷰어 대신 MP4 로 저장 (시뮬 시간 기준 프레임 → 재생 속도 = 실제). --seconds 로 길이를 정한다")
@@ -213,10 +222,12 @@ def main():
 
     kw = build_kwargs(a.gait, a.yawlead, a.push, a.var)
     lead = a.yawlead if a.yawlead is not None else float(cfg.swing.swing_foot_yaw_lead_scale)
-    print(f"  Convex MPC (A30, yawlead {lead:g})  gait {a.gait}  cmd vx {a.vx:+.2f} vy {a.vy:+.2f} wz {a.wz:+.2f}"
+    print(f"  Convex MPC (A41, yawlead {lead:g})  gait {a.gait}  cmd vx {a.vx:+.2f} vy {a.vy:+.2f} wz {a.wz:+.2f}"
           f"  {a.seconds:g} s")
+    if "pushes" in kw and not a.record:
+        sys.exit("  외란 여러 개 (쉼표) 는 --record 에서만 된다 — 뷰어 · 헤드리스는 하나만")
     if a.headless:
-        r = engine.headless(a.vx, a.vy, a.wz, a.seconds, variant="A30", **kw)
+        r = engine.headless(a.vx, a.vy, a.wz, a.seconds, variant="A41", **kw)
         sys.exit(0 if r["pass"] else 1)
     if a.record:
         w, h = (int(x) for x in a.size.lower().split("x"))

@@ -398,6 +398,8 @@ class ConvexMPC:
         self.nc = (N_INEQ + N_EQ) * self.N
         self.gravity = float(_cfg(cfg, "model.gravity", -9.81))
         self.use_shifted_warm_start = bool(_cfg(cfg, "mpc.use_shifted_warm_start", True))
+        # 변형 wsh (Q&A 10/6 Q9, 기본 1): warm start 를 몇 칸 당길지 — 1 = 한 칸 (20 ms), 0.5 = 반 칸 (재풀이 간격 10 ms 에 맞춤, 이웃 칸 선형 보간)
+        self.warm_shift = float(_cfg(cfg, "mpc.warm_shift_steps", 1.0))
         self.fz_max = float(_cfg(cfg, "mpc.normal_force_max"))
         self.fz_min = float(_cfg(cfg, "mpc.normal_force_min"))
         self.force_ref_w = float(_cfg(cfg, "mpc.force_ref_weight", 0.0) or 0.0)   # 변형 fref (기본 0)
@@ -444,6 +446,7 @@ class ConvexMPC:
         self.fixed_iter = int(opts.pop("fixed_iter", 0) or 0)
         self.fixed_iter_stand = int(opts.pop("fixed_iter_stand", 0) or 0)   # 변형 admms (Q&A 10/1 Q22): 서기 모드 반복 수 (0 = 같음)
         self._iter_now = self.fixed_iter
+        self.rho_stand = float(opts.pop("rho_stand", 0.0) or 0.0)   # 변형 rhos (Q&A 10/6 Q55): 서기 모드 고정 ρ (0 = 걷기와 같음)
         self.init_mode = str(opts.pop("init", "nominal"))
         if self.init_mode not in ("nominal", "warm", "hold", "zero"):
             raise ValueError(f"init must be nominal / warm / hold / zero, got {self.init_mode!r}")
@@ -649,6 +652,7 @@ class ConvexMPC:
         s = osqp.OSQP()
         s.setup(P, q, A, l, u, **self.settings)
         self._solver = s
+        self._rho_now = float(self.settings["rho"]) if "rho" in self.settings else None   # 변형 rhos: 새 workspace 는 걷기 ρ 로 시작
         self._initialized = True
 
     def _solve_once(self, use_warm: bool, info):
@@ -737,6 +741,11 @@ class ConvexMPC:
             if want != self._iter_now:
                 self._solver.update_settings(max_iter=want)
                 self._iter_now = want
+        if self.rho_stand > 0.0:                              # 변형 rhos: 모드에 따라 고정 ρ 바꾸기 (바뀔 때만 — OSQP 가 다시 분해)
+            want_r = self.rho_stand if getattr(self, "_mode_now", None) == "standing" else float(self.settings["rho"])
+            if want_r != getattr(self, "_rho_now", float(self.settings["rho"])):
+                self._solver.update_settings(rho=want_r)
+                self._rho_now = want_r
         res = self._solver.solve(raise_error=False)
         info["iters"] = int(res.info.iter)
         info["status"] = str(res.info.status)
@@ -759,6 +768,9 @@ class ConvexMPC:
         w = np.empty(self.nv)
         w[:self.nv - NU] = self._last_solution[NU:]
         w[self.nv - NU:] = self._last_solution[self.nv - NU:]
+        if self.warm_shift != 1.0:                       # 변형 wsh: (1 − s)·지난 해 + s·한 칸 당긴 해
+            s_ = self.warm_shift
+            w = (1.0 - s_) * self._last_solution + s_ * w
         self._warm = w
 
     # ---- quadprog (비교용 정확 QP)

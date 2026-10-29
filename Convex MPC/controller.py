@@ -68,6 +68,9 @@ class LegRuntime:
     yaw_lo: float = math.nan      # 변형 yawtraj (Q&A 9/29 Q1): 이륙 순간 발 yaw · 시각 · yaw 궤적 길이
     t_lo: float = math.nan
     T_yaw: float = math.nan
+    pit_lo: float = math.nan      # 변형 pitchtraj (Q&A 10/6 Q28): 이륙 순간 발 pitch 보정각 · 시각 · 궤적 길이
+    t_plo: float = math.nan
+    T_pit: float = math.nan
 
 
 def _rpy_to_quat(r, p, y) -> np.ndarray:
@@ -417,6 +420,14 @@ class MitController:
 
     def _mark_liftoff_yaw(self, rt, state, leg, t, T):
         """변형 yawtraj: 스윙 시작 순간의 발 yaw · 시각 · 궤적 길이 (스윙 시간 × 비율) 를 기억."""
+        pfrac = cfg_get(self.cfg, "swing.pitch_trajectory_fraction", None)   # 변형 pitchtraj (Q&A 10/6 Q28)
+        if pfrac:
+            Rp = np.asarray(state.foot_R_W[leg], dtype=float)
+            fy_, fz_ = Rp[:, 1] / np.linalg.norm(Rp[:, 1]), Rp[:, 2] / np.linalg.norm(Rp[:, 2])
+            ez = np.array([0.0, 0.0, 1.0])
+            rt.pit_lo = float(np.arctan2(fy_.dot(np.cross(fz_, ez)), fz_.dot(ez)))   # swing_attitude_torque 의 pitch 보정각과 같은 정의
+            rt.t_plo = float(t)
+            rt.T_pit = max(1e-3, float(pfrac) * float(T))
         frac = cfg_get(self.cfg, "swing.yaw_trajectory_fraction", None)
         if not frac:
             return
@@ -438,6 +449,17 @@ class MitController:
         if not ff:
             return yaw_des, None                    # None → 속도항은 기본 그대로 (다리 상대 속도 감쇠)
         return yaw_des, (dpsi * (30 * s**2 - 60 * s**3 + 30 * s**4) / rt.T_yaw if s < 1.0 else 0.0)
+
+    def _swing_pitch_ref(self, rt, t):
+        """변형 pitchtraj (Q&A 10/6 Q28): 발 pitch 를 이륙 순간 기울기에서 수평으로 최소 저크로 옮긴다.
+        보정각 목표 e_ref = e_lo·(1 − b(s)), b = 10s³ − 15s⁴ + 6s⁵, s = (t − t_lo)/T_pit. 피치 각속도 목표 = e_lo·b'(s)/T_pit
+        (보정각이 줄어드는 쪽으로 발이 돈다). 꺼져 있으면 (0, 0) → 기본 (목표 수평, 속도 목표 0)."""
+        if not cfg_get(self.cfg, "swing.pitch_trajectory_fraction", None) or not np.isfinite(rt.pit_lo):
+            return 0.0, 0.0
+        s = min(max((float(t) - rt.t_plo) / rt.T_pit, 0.0), 1.0)
+        bias = rt.pit_lo * (1.0 - (10 * s**3 - 15 * s**4 + 6 * s**5))
+        rate = rt.pit_lo * (30 * s**2 - 60 * s**3 + 30 * s**4) / rt.T_pit if s < 1.0 else 0.0
+        return bias, rate
 
     def _second_footholds(self, ref, steps, foot_yaw):
         """변형 'foot2' (Q&A 9/28 Q10): 기본은 다리당 발 위치 하나를 지평 전체에 쓴다.
@@ -546,10 +568,12 @@ class MitController:
                 yaw_des, yaw_rate_des = self._swing_yaw_ref(rt, t)
                 ff_mode = int(cfg_get(cfg, "swing.yaw_trajectory_ff", 1))
                 torso_ref = float(self.filtered.psi_dot) if ff_mode == 2 else float(state.torso_angvel_W[2])
+                p_bias, p_rate = self._swing_pitch_ref(rt, t)       # 변형 pitchtraj (Q&A 10/6 Q28)
                 tau[leg] = swing_torque(dyn, state, leg, rt.traj.position(), rt.traj.velocity(),
                                         rt.traj.acceleration(), rt.touchdown_yaw, cfg,
                                         yaw_des=yaw_des, yaw_rate_des=yaw_rate_des,
-                                        torso_wz=torso_ref)   # yawff=2: 몸통 회전은 명령 ψ̇ 로 (Q&A 9/29 Q1)
+                                        torso_wz=torso_ref,   # yawff=2: 몸통 회전은 명령 ψ̇ 로 (Q&A 9/29 Q1)
+                                        pitch_bias=p_bias, pitch_rate_ref=p_rate)
                 lim_mode = int(cfg_get(cfg, "swing.torque_limit_mode", 0) or 0)   # 변형 swlim (Q&A 9/30 Q4)
                 if lim_mode:
                     ids = self.model.leg_act[leg]

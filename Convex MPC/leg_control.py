@@ -178,6 +178,22 @@ def walking_stance_torque(dyn, state, leg: int, u0, alpha: float, touchdown_yaw:
     if line_proj is not None and alpha > 0.0 and int(line_proj[3]) in (1, 2):
         Fg, Mg, _ = project_line_wrench(-F, -M, line_proj[2], line_proj[0], line_proj[1], int(line_proj[3]))
         F, M = -Fg, -Mg
+    hc = float(_cfg(cfg, "swing.stance_yaw_hold_torsion_clip", 0.0) or 0.0)
+    if hc > 0.0 and line_proj is not None and alpha > 0.0:
+        # 변형 holdclip (Q&A 10/6 Q50): yaw hold 를 더한 최종 비틀림을 선 접촉 두 점 옆 마찰 (행 8 ~ 11) 이 허용하는 구간으로.
+        # 힘 · CoP 는 그대로 (lproj=3 에서 이미 잘림) — Mz 만. 구간 [lo, hi] 는 project_line_wrench mode 2 와 같은 식,
+        # hc = 1 이면 물리 한계 그대로, hc > 1 이면 구간 가운데를 기준으로 폭을 hc 배.
+        C_, l_ = np.asarray(line_proj[0], dtype=float), float(line_proj[1])
+        mu_ = -float(C_[0, 2])
+        c_, s_ = np.cos(float(line_proj[2])), np.sin(float(line_proj[2]))
+        Rt_ = np.array([[c_, s_, 0.0], [-s_, c_, 0.0], [0.0, 0.0, 1.0]])
+        Fg, Mg = Rt_ @ (-F), Rt_ @ (-M)               # 지면 → 로봇, 발 yaw 좌표 (z 축은 월드와 같음)
+        fz_, fy_, my_ = max(float(Fg[2]), 0.0), float(Fg[1]), float(Mg[1])
+        lo = max(-mu_ * (l_ * fz_ - my_) - l_ * fy_, l_ * fy_ - mu_ * (l_ * fz_ + my_))
+        hi = min(mu_ * (l_ * fz_ - my_) - l_ * fy_, l_ * fy_ + mu_ * (l_ * fz_ + my_))
+        mid, half = 0.5 * (lo + hi), max(0.0, 0.5 * (hi - lo)) * hc   # 구간이 한 점 (Fy 가 마찰 한계) 이면 반올림으로
+        M = M.copy()                                                     # lo > hi 가 될 수 있다 → 가운데 점으로
+        M[2] = -float(np.clip(Mg[2], mid - half, mid + half))
     tau = stance_torque(dyn, F, M)
     if bool(_cfg(cfg, "swing.walk_stance_bias", False)):   # 변형 walkbias (Q&A 9/29 Q7): 입각 다리 자중 · 코리올리 보상
         tau = tau + np.asarray(dyn.bias, dtype=float)
@@ -204,7 +220,7 @@ def swing_kp(dyn, cfg) -> np.ndarray:
 
 
 def swing_attitude_torque(state, leg: int, dyn, touchdown_yaw: float, cfg, yaw_des=None, yaw_rate_des: float = 0.0,
-                          torso_wz: float = 0.0) -> np.ndarray:
+                          torso_wz: float = 0.0, pitch_bias: float = 0.0, pitch_rate_ref: float = 0.0) -> np.ndarray:
     """스윙 발 자세 토크 (발바닥 수평 + 착지 yaw).
 
     x̂,ŷ,ẑ = 정규화한 발 SITE 축 (R_WF 열), ω = Jw q̇_leg (torso 제외), up = e_z
@@ -242,7 +258,8 @@ def swing_attitude_torque(state, leg: int, dyn, touchdown_yaw: float, cfg, yaw_d
         moment += (rkp * e - rkd * fx.dot(omega)) * fx
     if pitch_on:
         e = np.arctan2(fy.dot(np.cross(fz, _EZ)), fz.dot(_EZ))
-        moment += (pkp * e - pkd * fy.dot(omega)) * fy
+        # 변형 pitchtraj (Q&A 10/6 Q28): 보정각 목표 pitch_bias · 각속도 목표 pitch_rate_ref (기본 0 → 발바닥 수평)
+        moment += (pkp * (e - pitch_bias) - pkd * (fy.dot(omega) - pitch_rate_ref)) * fy
     if yaw_on:
         proj = fx - fx.dot(_EZ) * _EZ
         nrm = np.linalg.norm(proj)
@@ -259,7 +276,8 @@ def swing_attitude_torque(state, leg: int, dyn, touchdown_yaw: float, cfg, yaw_d
 
 
 def swing_torque(dyn, state, leg: int, p_des, v_des, a_des, touchdown_yaw: float, cfg,
-                 yaw_des=None, yaw_rate_des: float = 0.0, torso_wz: float = 0.0) -> np.ndarray:
+                 yaw_des=None, yaw_rate_des: float = 0.0, torso_wz: float = 0.0,
+                 pitch_bias: float = 0.0, pitch_rate_ref: float = 0.0) -> np.ndarray:
     """스윙 발 작업공간 제어 + 자세 토크.
 
     F_fb = 0 (힘 앞먹임) + Kp (p_des − p) + Kd (v_des − v)     p, v = 발 SITE 위치/속도 (state, world)
@@ -278,7 +296,8 @@ def swing_torque(dyn, state, leg: int, p_des, v_des, a_des, touchdown_yaw: float
     a_res = np.asarray(a_des, dtype=float) - np.asarray(dyn.JvDot_qd, dtype=float)
     lam = apparent_inertia(Jv, dyn.M)
     tau = Jv.T @ f_fb + Jv.T @ (lam @ a_res) + np.asarray(dyn.bias, dtype=float)
-    return tau + swing_attitude_torque(state, leg, dyn, touchdown_yaw, cfg, yaw_des, yaw_rate_des, torso_wz)
+    return tau + swing_attitude_torque(state, leg, dyn, touchdown_yaw, cfg, yaw_des, yaw_rate_des, torso_wz,
+                                       pitch_bias, pitch_rate_ref)
 
 
 def limit_swing_torque(tau_des, dyn, lo, hi, mode: int, w_att: float = 0.01, eps: float = 1e-4) -> np.ndarray:

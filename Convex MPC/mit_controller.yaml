@@ -1,8 +1,10 @@
 # ===========================================================================
-# Convex MPC 폴더 설정 = A30 (Q&A 9/30 Q23, 2026-10-01 발표 설정) + ymax 1.0.
-# 기본값에서 바꾼 줄에는 "# A30 <변형 키> (원래 값)" 주석을 달았다.
+# Convex MPC 폴더 설정 = A41 (Q&A 10/6 Q76 · Q86, MPC 최종 설정) + 명령 상한을 측정 한계까지 (전진 1.5 · 옆 1.0 · 회전 3.0).
+# A41 = A30 (2026-10-01 발표 설정) + wsh 0.5 · kdz 0.5 · pitchtraj 0.7 · qpy 1e5 · qpitch 3000 · yawlead 1 · holdclip 1
+#       · admms 25 · rhos 1e-5 · armsw 1.0 (MPC/src/casadi_mit/diag/configs.py).
+# 기본값에서 바꾼 줄에는 "# A30 <변형 키> (원래 값)" 주석을, A30 → A41 에서 바꾼 줄에는 "# A41 <키> (A30 값)" 주석을 달았다.
 # (디버깅 폴더 MPC/src/casadi_mit 는 기본값 yaml 에 같은 값을 --var 문자열로 덮어쓴다.)
-# yaml 경로가 없는 A30 키 (컨트롤러 · 솔버 생성 인자) 는 맨 아래 launcher: 절에 있다.
+# yaml 경로가 없는 키 (컨트롤러 · 솔버 생성 인자) 는 맨 아래 launcher: 절에 있다.
 # ===========================================================================
 requested_locomotion_mode: walking  # requested startup mode: walking / standing / interactive
 
@@ -35,10 +37,11 @@ mpc:
   line_wrench_projection: 3     # A30 lproj — 걷기: MPC 해를 선 접촉 집합으로 자름 (yaw hold 를 더하기 전)
   line_wrench_projection_stand: 1   # A30 lprojs — 서기에서도 자름
   moment_variable_scale: 1      # A30 msc — 모멘트 변수를 l 로 나눠 풂 (해 같음, ADMM 25 회로 50 회 수준 정확도)
+  warm_shift_steps: 0.5         # A41 wsh — warm start 를 반 칸 (10 ms = 재풀이 간격) 만큼 당김 (A30 은 한 칸 20 ms, Q&A 10/6 Q9 · Q18)
   walking:
     contact_wrench_model: full_wrench  # full_wrench or no_roll_moment
     #                    roll   pitch  yaw    px     py     pz      omega_x  omega_y  omega_z  vx     vy     vz    g
-    state_weight_diag: [50000,  9000,  750,   200000,  1009300,  110000,     10,     10,     10,     100,    70,    10,   1 ]   # A30 qyaw: yaw 750 (500)
+    state_weight_diag: [50000,  3000,  750,   200000,  100000,  110000,     10,     10,     10,     100,    70,    10,   1 ]   # A30 qyaw: yaw 750 (500) · A41 qpitch: pitch 3000 (9000) · A41 qpy: py 100000 (1009300)
     #                    Fx_L    Fy_L    Fz_L    Fx_R    Fy_R    Fz_R    Mx_L    My_L    Mz_L    Mx_R    My_R    Mz_R
     input_weight_diag: [1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3]
     # [1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3]
@@ -61,7 +64,7 @@ swing:
   body_velocity_half_stance_offset_switch_speed: 0.60
   high_speed_body_velocity_half_stance_offset: 0.41
   high_speed_body_velocity_half_stance_offset_switch_speed: 0.65
-  swing_foot_yaw_lead_scale: 0.5   # A30 yawlead (1.0) — 착지 yaw = yaw + 0.5·ψ̇·T_p. 실행기 --yawlead 로 바꿀 수 있음
+  swing_foot_yaw_lead_scale: 1.0   # A41 yawlead (A30 0.5) — 착지 yaw = yaw + 1.0·ψ̇·T_p. 실행기 --yawlead 로 바꿀 수 있음
   enable_stance_foot_yaw_hold: true
   turn_tangential_lead_scale: 1.0
   nominal_foot_offsets_B:
@@ -84,7 +87,7 @@ swing:
   stance_yaw_kp: 60.0   # A30 shkp (20) — 딛는 발 yaw hold m_z = kp·err − kd·rate (MPC 밖 관절 되먹임)
   stance_yaw_kd: 12.0   # A30 shkd (4)
   # --- A30 에서 더한 swing 키 (원본 yaml 에는 없음 = 끔) ---
-  kd_zeta: 1.2                  # A30 kdz — 스윙 K_d = 2ζ·diag(Λ)·ω_n (kd_diag 대신)
+  kd_zeta: 0.5                  # A41 kdz (A30 1.2) — 스윙 K_d = 2ζ·diag(Λ)·ω_n (kd_diag 대신). 고속 스윙 hip pitch 포화 감소 (Q&A 10/6 Q27 · Q61)
   yaw_trajectory_fraction: 1.0  # A30 yawtraj — 스윙 발 yaw 를 스윙 전체에 걸친 최소 저크 궤적으로
   yaw_trajectory_ff: 2          # A30 yawff — 그 궤적의 속도 목표에서 명령 ψ̇ 를 뺀다
   step_vdir_blend: 0.7          # A30 vdir — 착지 앞먹임 v·T_p 의 방향만 실측 진행 방향 쪽으로 70 % (크기는 명령)
@@ -97,6 +100,9 @@ swing:
   k_sched_lat_y: 0.47           # A30 ksy — 옆으로 걸을 때 옆 k_half 를 0.47 쪽으로 (|v_y|/0.5 비율). |ψ̇| ≥ 0.5 면 둘 다 0.41
   stance_yaw_fade_rate: 2.0     # A30 shw — |ψ̇| 가 2.0 에 가까울수록 yaw hold 이득을 20 / 4 로 푼다
   stance_yaw_rate_absolute: 1   # A30 shabs — yaw hold 감쇠에 발의 절대 yaw 각속도 (몸통 기준 상대 속도 대신)
+  # --- A41 에서 더한 swing 키 (A30 에는 없음 = 끔) ---
+  pitch_trajectory_fraction: 0.7     # A41 pitchtraj — 스윙 발 pitch 목표를 이륙 기울기에서 수평으로 스윙의 70 % 동안 옮김 (Q&A 10/6 Q28)
+  stance_yaw_hold_torsion_clip: 1.0  # A41 holdclip — yaw hold 를 더한 최종 비틀림을 선 접촉 한계로 자름 (보내는 렌치까지 OA-MPC 제약, Q&A 10/6 Q50 · Q54)
 
 user_command_filter:
   x_dot_tau: 0.92
@@ -104,9 +110,9 @@ user_command_filter:
   psi_dot_tau: 0.70
   standing_roll_offset_tau: 0.70
   standing_pitch_offset_tau: 0.70
-  x_dot_max: 1.0    # A30 xmax (0.7) — 명령 상한
-  y_dot_max: 1.0    # ymax (0.5) — 옆 0.8 m/s 를 자르지 않게 (발표 폴더에서 추가)
-  psi_dot_max: 2.5  # A30 wmax (2.0)
+  x_dot_max: 1.5    # 명령 상한 = A41 측정 한계 (Q&A 10/6 Q86: 전진 1.5 m/s 120 s 완주, 1.55 ✗)
+  y_dot_max: 1.0    # 옆 한계는 +0.65 / −0.7 m/s (그 위는 넘어짐 — 상한으로 자르지 않음)
+  psi_dot_max: 3.0  # 제자리 회전 3.0 rad/s 120 s 완주 (3.25 ✗)
 
 reference_trajectory:
   # single_support: legacy behavior, double_support: only when both feet are stance, always: integrate every step
@@ -197,9 +203,10 @@ launcher:
   foot_model: line       # A30 foot — OA-MPC 선 접촉 (Mx = 0 등식 + 12 행 부등식)
   raibert_gain: 0.2      # A30 rai — 착지점 Raibert 항 Δp = K·(v_실측 − v_명령), K [s], 최대 10 cm
   ypath: 0.3             # A30 ypath — MPC 옆 위치 참조를 경로선 쪽으로 30 %
-  arm_swing: 0.3         # A30 armsw — 팔 반대 흔들기 [rad/m]
+  arm_swing: 1.0         # A41 armsw (A30 0.3) — 팔 반대 흔들기 [rad/m]. 위몸 yaw 흔들림 1/3 (Q&A 10/6 Q75 · Q76)
   osqp:                  # MPC QP 풀이 (OSQP). σ 1e-6 · α 1.6 · Ruiz 10 은 mpc.py 기본값
     fixed_iter: 25       # A30 admm — 걷기 ADMM 고정 25 회 (논문 N_QP). 적응 ρ · 종료 판정 끔
-    fixed_iter_stand: 50 # A30 admms — 서기 50 회
+    fixed_iter_stand: 25 # A41 admms (A30 50) — 서기도 25 회
     rho: 5.0e-5          # A30 rho — ADMM ρ (OSQP 기본 0.1)
+    rho_stand: 1.0e-5    # A41 rhos — 서기 전용 고정 ρ (25 회로 정확해와 같은 서기 외란 결과, Q&A 10/6 Q55)
     init: warm           # A30 init — 직전 해를 한 칸 밀어 시작점으로 (nominal = 논문식 공칭 자세)
