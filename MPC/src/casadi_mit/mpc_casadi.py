@@ -104,7 +104,7 @@ def line_foot_template(cfg, margin=None) -> np.ndarray:
     # fz_뒤 = (my + l·Fz)/2l ≥ ε·Fz ⟺ −my ≤ (1 − 2ε)·l·Fz. 비틀림 행의 지렛대 l 은 그대로 (실제 두 접촉점).
     eps = float(_cfg(cfg, "mpc.cop_margin_frac", 0.0) or 0.0) if margin is None else float(margin)
     c = 1.0 - 2.0 * eps
-    return np.array([
+    T = np.array([
         [1.0, 0.0, -mu, 0.0, 0.0, 0.0],             # 0   Fx − µFz ≤ 0
         [-1.0, 0.0, -mu, 0.0, 0.0, 0.0],            # 1  −Fx − µFz ≤ 0
         [0.0, 1.0, -mu, 0.0, 0.0, 0.0],             # 2   Fy − µFz ≤ 0   (합력 — 점별은 8~11이 정확)
@@ -118,6 +118,11 @@ def line_foot_template(cfg, margin=None) -> np.ndarray:
         [0.0, lt, -mu * lt, 0.0, -mu, -1.0],        # 10  lt·Fy − mz ≤ µ(lt·Fz + my)   (뒤꿈치 점 y 마찰)
         [0.0, -lt, -mu * lt, 0.0, -mu, 1.0],        # 11 −(lt·Fy − mz) ≤ µ(lt·Fz + my)
     ])
+    if float(_cfg(cfg, "mpc.friction_cone_diamond", 0.0) or 0.0):
+        # 변형 fcone=1 (Q&A 10/6 Q97, 기본 0): 행 0 ~ 3 을 마름모 ±Fx ± Fy ≤ µFz 로 — MuJoCo pyramidal 원뿔 (|f₁| + |f₂| ≤ µf_n,
+        # 9/28 Q6) 과 같은 모양. 사각 피라미드는 대각에서 2µFz 까지 허용한다. 열 (0, 1, 2) 은 그대로라 희소 패턴이 같다.
+        T[0:4, 0:3] = [[1.0, 1.0, -mu], [1.0, -1.0, -mu], [-1.0, 1.0, -mu], [-1.0, -1.0, -mu]]
+    return T
 
 
 _REF_UNIT_COLS = [[0, 1, 2], [0, 1, 2], [0, 1, 2], [0, 1, 2], [2], [2],
@@ -171,6 +176,10 @@ class CasadiCondensedMPC(ConvexMPC):
         # 두 점 분해 Fz_heel = (my + l_t·Fz)/(l_h + l_t), Fz_toe = (l_h·Fz − my)/(l_h + l_t) (OA-MPC) 에서
         # CoP 두 행의 우변을 0 → −(l_h + l_t)·f_min 로. ref 발은 l_h = l_t = foot_half_length (행 8, 9), line 은 행 6, 7.
         self.point_fmin = float(_cfg(cfg, "mpc.point_force_min", 0.0) or 0.0)
+        # 변형 fmoff=F₀ (Q&A 10/6 Q97, 기본 0): 걷기 디딤 칸의 마찰 행 0 ~ 3 우변을 0 → −µF₀. 곧 |Fx| ≤ µ(Fz − F₀) — 하중이 작은
+        # 칸일수록 실효 µ 가 µ(1 − F₀/Fz) 로 줄어든다 (선형). 행 0 + 1 이 Fz ≥ F₀ 를 뜻하므로 디딤 발 최소 하중도 F₀ 가 된다.
+        self.fric_offset = float(_cfg(cfg, "mpc.friction_force_offset", 0.0) or 0.0)
+        self._mu = float(_cfg(cfg, "mpc.friction_coefficient"))
         self._cop_rows = (6, 7) if foot_model == "line" else (8, 9)
         self._cop_span = 2.0 * float(_cfg(cfg, "mpc.foot_half_length"))
         self._step_map = build_step_function(self.dt).map(self.N)
@@ -337,6 +346,9 @@ class CasadiCondensedMPC(ConvexMPC):
                 ub_ineq[:, off + self._cop_rows[1]] = rhs
                 ub_ineq[late[:, side], off + 7] = 0.0                 # 변형 toeoff: 풀린 칸은 뒤꿈치 최소 하중 없음
                 ub_ineq[early[:, side], off + 6] = 0.0                # 변형 hstk: 뒤꿈치 한 점 칸은 발끝 최소 하중 없음
+        if self.fric_offset > 0.0 and getattr(self, "_mode_now", None) == "walking":   # 변형 fmoff
+            for side, off in ((0, 0), (1, 12)):
+                ub_ineq[stance[:, side], off:off + 4] = -self._mu * self.fric_offset
         l = np.concatenate([np.full(N_INEQ * n, -np.inf), np.zeros(N_EQ * n)])
         u = np.concatenate([ub_ineq.reshape(-1), np.zeros(N_EQ * n)])
         sig = tuple(int(v) for v in stance.reshape(-1))

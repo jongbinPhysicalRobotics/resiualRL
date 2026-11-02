@@ -132,7 +132,7 @@ def parse_variant(s: str | None) -> dict:
             kw["stand_yaw_hold"] = bool(int(v))
         elif k == "armsw":                         # 팔 반대 흔들기 k [rad/m] (기본 0 — Q&A 9/28)
             kw["arm_swing"] = float(v)
-        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm", "zoff", "rsc", "fzmax", "mdt", "wsh", "wdum", "pitchtraj", "toeoff", "toeeps", "toepin", "latsway", "holdclip", "pitchref", "ecgate", "toetraj", "toesense", "toeang", "swasym", "htoe", "htoes", "htoev", "htoepin", "htoeq", "htoep", "htoepk", "htoekp", "htoekd", "hstk", "hstk1", "hstkpin"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
+        elif k in ("tdz", "fref", "tswing", "tcycle", "hor", "kdz", "raii", "psioff", "raiy", "cent", "srbm", "walkbias", "vmeas", "vdir", "rais", "raisx", "wbcom", "swh", "tors", "nbs", "minw", "replan", "rvwb", "rpfz", "swprof", "swlim", "wmax", "ymax", "shw", "lproj", "wdu", "cmar", "fpd", "sjd", "sjdm", "uint", "uintm", "shabs", "hmpc", "msc", "ksx", "ksy", "ksw", "cmarw", "lprojs", "attank", "swq", "frefm", "zoff", "rsc", "fzmax", "mdt", "wsh", "wdum", "pitchtraj", "toeoff", "toeeps", "toepin", "latsway", "holdclip", "pitchref", "ecgate", "toetraj", "toesense", "toeang", "swasym", "htoe", "htoes", "htoev", "htoepin", "htoeq", "htoep", "htoepk", "htoekp", "htoekd", "hstk", "hstk1", "hstkpin", "fcone", "fmoff"):   # 설정 덮어쓰기 (Q&A 9/29 Q5 ~ Q8)
             path = {"tdz": "swing.touchdown_z", "fref": "mpc.force_ref_weight", "tswing": "timing.swing",
                     "tcycle": "timing.cycle", "hor": "timing.horizon", "kdz": "swing.kd_zeta",
                     "raii": "swing.raibert_int_gain", "psioff": "swing.psi_offset_scale",
@@ -193,6 +193,8 @@ def parse_variant(s: str | None) -> dict:
                     "hstk": "swing.heel_strike_angle",         # hstk=θ: 뒤꿈치 착지 — 스윙 끝 발끝을 θ [rad] 들고, 디딤 0 ~ s1 은 뒤꿈치 한 점 (기본 0 = 끔)
                     "hstk1": "mpc.heel_strike_fraction",       # hstk1=s1: 뒤꿈치 한 점 구간 (디딤 경과, 기본 0.1)
                     "hstkpin": "mpc.heel_strike_pin",          # hstkpin=c: 그 칸의 CoP 를 [−l, −c·l] 에 묶음 (기본 0.9)
+                    "fcone": "mpc.friction_cone_diamond",      # fcone=1: MPC 마찰 행 0 ~ 3 을 마름모 |Fx| + |Fy| ≤ µFz 로 (시뮬 원뿔 모양, 기본 0, Q&A 10/6 Q97)
+                    "fmoff": "mpc.friction_force_offset",      # fmoff=F₀: 걷기 디딤 칸 |Fx|, |Fy| ≤ µ(Fz − F₀) — 하중 작은 칸의 실효 µ 를 낮춤 (기본 0, Q97)
                     "attank": "swing.attitude_ankle_only",    # attank=1: 스윙 발 pitch 자세 모멘트를 발목에만 (Q&A 10/6 Q3)
                     "swq": "swing.blend_order"}[k]             # swq=5: 스윙 궤적 5 차 최소 저크 (기본 3 차 smoothstep)
             kw.setdefault("raw_over", {})[path] = float(v)

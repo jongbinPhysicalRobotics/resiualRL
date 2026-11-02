@@ -95,6 +95,10 @@ def project_line_wrench(F_g, M_g, yaw: float, C, l: float, mode: int = 1):
         x[2] = max(x[2], 0.0)
         x[0] = np.clip(x[0], -mu * x[2], mu * x[2])
         x[1] = np.clip(x[1], -mu * x[2], mu * x[2])
+        if float(np.asarray(C)[0, 1]) != 0.0:                # 변형 fcone=1 (Q&A 10/6 Q97): 마름모 |Fx| + |Fy| ≤ µFz 로 같은 비율로 줄임
+            s1 = abs(x[0]) + abs(x[1])
+            if s1 > mu * x[2]:
+                x[0:2] *= mu * x[2] / s1
         x[3] = 0.0
         # CoP 행 6 (my ≤ c₆·l·Fz) · 7 (−my ≤ c₇·l·Fz) 의 계수 (cmar 가 있으면 (1 − 2ε)·l). 대칭 템플릿이면 전과 같음,
         # 변형 toeoff (Q&A 10/6 Q30) 의 template_toe 는 행 7 만 풀려 있다.
