@@ -102,6 +102,8 @@ def parse_variant(s: str | None) -> dict:
             kw.setdefault("osqp_settings", {})["fixed_iter"] = int(v)
         elif k == "init":                          # 고정 반복의 초기 추정: nominal (논문) / warm / zero
             kw.setdefault("osqp_settings", {})["init"] = str(v)
+        elif k == "ydual":                         # init=warm 의 쌍대 y 출발점: keep (기본) / shift (x 처럼 당김) / zero — Q&A 10/6 Q92
+            kw.setdefault("osqp_settings", {})["dual_init"] = str(v)
         elif k == "admms":                         # 서기 모드 고정 ADMM 반복 수 (기본 = admm 과 같음) — Q&A 10/1 Q22
             kw.setdefault("osqp_settings", {})["fixed_iter_stand"] = int(v)
         elif k == "rhos":                          # 서기 모드 고정 ρ (기본 = rho 와 같음) — Q&A 10/6 Q55

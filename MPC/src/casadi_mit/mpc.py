@@ -460,6 +460,11 @@ class ConvexMPC:
         self.init_mode = str(opts.pop("init", "nominal"))
         if self.init_mode not in ("nominal", "warm", "hold", "zero"):
             raise ValueError(f"init must be nominal / warm / hold / zero, got {self.init_mode!r}")
+        # 변형 ydual (Q&A 10/6 Q92): init=warm 일 때 쌍대 y 의 출발점. keep = workspace 에 남은 지난 y (기본 — 당기지도
+        # 다시 스케일하지도 않음, Q91 §3) / shift = 지난 해의 y 를 x 와 같은 양만큼 당겨 원래 단위로 넣음 / zero = y = 0
+        self.dual_init = str(opts.pop("dual_init", "keep"))
+        if self.dual_init not in ("keep", "shift", "zero"):
+            raise ValueError(f"dual_init must be keep / shift / zero, got {self.dual_init!r}")
         if opts:
             self.settings.update(opts)
         if self.fixed_iter > 0:
@@ -478,6 +483,7 @@ class ConvexMPC:
         self._has_prev = False
         self._warm = np.zeros(self.nv)
         self._last_solution = np.zeros(self.nv)
+        self._warm_y = None                              # 변형 ydual=shift: 당긴 쌍대 (원래 단위)
         # 데이터 (마지막 build)
         self._Px = None
         self._q = None
@@ -734,7 +740,12 @@ class ConvexMPC:
         self._Px, self._q, self._Ax, self._l, self._u = Px, q, Ax, l, u
         self._sig, self._has_sig = sig, True
         if self.init_mode == "warm" and self._has_prev and np.all(np.isfinite(self._warm)):
-            self._solver.warm_start(x=self._warm)
+            if self.dual_init == "shift" and self._warm_y is not None:
+                self._solver.warm_start(x=self._warm, y=self._warm_y)   # OSQP 가 새 배율 (E, c) 로 스케일
+            elif self.dual_init == "zero":
+                self._solver.warm_start(x=self._warm, y=np.zeros(self.nc))
+            else:
+                self._solver.warm_start(x=self._warm)
         elif self.init_mode == "hold" and self._has_prev and np.all(np.isfinite(self._last_solution)):
             self._solver.warm_start(x=self._last_solution)
         else:
@@ -768,8 +779,28 @@ class ConvexMPC:
             raise MpcSolveError("fixed-iteration ADMM returned an invalid iterate")
         self._last_solution = U.copy()
         self._update_warm_start()
+        if self.dual_init == "shift":
+            Y = None if res.y is None else np.array(res.y, dtype=float, copy=True)
+            ok = Y is not None and Y.shape == (self.nc,) and np.all(np.isfinite(Y))
+            self._warm_y = self._shift_dual(Y) if ok else None
         self._has_prev = True
         return U
+
+    def _shift_dual(self, y):
+        """변형 ydual=shift: 쌍대를 _update_warm_start 의 x 와 같은 양만큼 당긴다. 행 = [부등식 N×24 | 등식 N×12], 칸 우선."""
+        n = self.N
+        parts = []
+        for b in (y[:N_INEQ * n].reshape(n, N_INEQ), y[N_INEQ * n:].reshape(n, N_EQ)):
+            if self.use_shifted_warm_start:
+                w = np.empty_like(b)
+                w[:-1] = b[1:]
+                w[-1] = b[-1]
+                if self.warm_shift != 1.0:
+                    w = (1.0 - self.warm_shift) * b + self.warm_shift * w
+            else:
+                w = b
+            parts.append(w.reshape(-1))
+        return np.concatenate(parts)
 
     def _update_warm_start(self):
         """updateWarmStart (ConvexMPC.cpp:1094-1108): 한 step (12) 당겨오고 마지막 step 반복."""
