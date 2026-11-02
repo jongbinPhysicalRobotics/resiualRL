@@ -212,6 +212,8 @@ def parse_variant(s: str | None) -> dict:
             kw["sym_inertia"] = bool(int(v))
         elif k == "foot4":                         # 변형 (Q&A 10/6 Q65): 로봇 발 충돌 모양 — box = URDF 원저자 상자 발 (접촉 4 점). MPC 는 그대로 2 점
             kw["foot_geom"] = {"0": "line", "line": "line", "1": "box", "box": "box"}[v]
+        elif k == "simmu":                         # 변형 (Q&A 10/6 Q93): 시뮬 접촉 미끄럼 µ (기본 = 모델: 발 1.0 · 바닥 0.8 → 큰 값 1.0). MPC µ 는 mpcmu 로 따로
+            kw["sim_mu"] = float(v)
         elif k == "hipfix":                        # 변형 (Q&A 10/6 Q41): 왼 hip_yaw 관성을 오른쪽의 거울상으로 (URDF ixz 부호 오류, 질량 · CoM 그대로)
             # ※ 10/9 (Q42) 부터 모델 파일 자체를 고쳐서 symcom · syminert · hipfix 는 효과가 없다 (이미 대칭). 옛 기록 재현용으로 남김.
             kw["hip_fix"] = bool(int(v))
@@ -527,7 +529,7 @@ def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale
            osqp_settings=None, fixes=(), x_dot_max=None, k_half=None, foot_model="ref", mpc_mu=None,
            stand_yaw_hold=True, stand_bias=True, side_swap=False, raibert_gain=0.0, ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None, sim_cone=None, yaw_hold=None,
            yaw_lead=None, point_fmin=None, k_half_y=None, swing_over=None, xpath=0.0, raw_over=None, w_force_xy=None,
-           sym_com=False, sym_inertia=False, hip_fix=False, foot_geom="line"):
+           sym_com=False, sym_inertia=False, hip_fix=False, foot_geom="line", sim_mu=None):
     cfg = config.load()
     if (x_dot_max is not None or k_half is not None or mpc_mu is not None or cop_half is not None or w_moment is not None
             or q_state or yaw_hold is not None or yaw_lead is not None or point_fmin is not None or k_half_y is not None or swing_over or raw_over
@@ -575,6 +577,8 @@ def _setup(vx, vy, wz, solver, armature, profile, markers, stand, friction_scale
                 raw["swing"][key] = float(k_half)
         cfg = config.MitConfig(raw)
     model = MitModel(armature=armature, emulate_debug_markers=markers, foot_geom=foot_geom)
+    if sim_mu is not None:                        # 변형 simmu: MuJoCo 접촉 µ = 두 geom 중 큰 값이므로 모든 geom 을 같은 값으로
+        model.m.geom_friction[:, 0] = float(sim_mu)
     if sym_com:                                   # 진단 전용: base 몸체 무게중심 y (+4.8 mm) 를 0 으로
         model.m.body_ipos[model.base_body, 1] = 0.0
     if sym_inertia:                               # 변형 syminert (Q&A 10/6 Q40): URDF 몸통 관성의 ixy · iyz 만 0 으로
@@ -648,7 +652,7 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
              ypos_gain=0.0, ypath=0.0, arm_swing=0.0, cop_half=None, w_moment=None, q_state=None, sim_cone=None,
              yaw_hold=None, yaw_lead=None, point_fmin=None, k_half_y=None, swing_over=None, xpath=0.0,
              raw_over=None, push=None, push_repeat=0.0, w_force_xy=None, sym_com=False, sym_inertia=False, hip_fix=False,
-             foot_geom="line"):
+             foot_geom="line", sim_mu=None):
     """walking seconds 동안 (시뮬 = settle + seconds). 반환 dict (metrics + fell 등).
 
     push = (Fx, Fy, t0, dur): 진행 방향 (몸통 yaw) 기준 수평력 [N] 을 측정 창 시작 + t0 부터 dur 동안 몸통 CoM 에 가한다."""
@@ -661,7 +665,7 @@ def headless(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=T
                                      q_state=q_state, sim_cone=sim_cone, yaw_hold=yaw_hold, yaw_lead=yaw_lead,
                                      point_fmin=point_fmin, k_half_y=k_half_y, swing_over=swing_over,
                                      xpath=xpath, raw_over=raw_over, w_force_xy=w_force_xy, sym_com=sym_com,
-                                     sym_inertia=sym_inertia, hip_fix=hip_fix, foot_geom=foot_geom)
+                                     sym_inertia=sym_inertia, hip_fix=hip_fix, foot_geom=foot_geom, sim_mu=sim_mu)
     m, d = model.m, model.d
     total = (0.0 if stand else walk_t) + seconds
     n = int(round(total / m.opt.timestep))
