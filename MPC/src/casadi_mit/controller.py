@@ -157,7 +157,8 @@ class MitController:
         self.clock = HorizonClock(t, cfg)
         self.gait = GaitScheduler(cfg, self.clock, side_swap=self.side_swap)
         self.cm = ContactManager(cfg)
-        self.planner = SwingFootPlanner(cfg, raibert_gain=self.raibert_gain, ypos_gain=self.ypos_gain)
+        self.planner = SwingFootPlanner(cfg, raibert_gain=self.raibert_gain, ypos_gain=self.ypos_gain,   # 변형 raimax (Q&A 10/6 Q100): 상한 기본 0.10
+                                        raibert_max=float(cfg_get(cfg, "swing.raibert_max", 0.10) or 0.10))
         import planner as _planner_mod                             # 변형 psioff (Q&A 9/29 Q6)
         _planner_mod.PSI_OFFSET_SCALE = float(cfg_get(cfg, "swing.psi_offset_scale", 1.0))
         _planner_mod.K_SCHED_X = None                              # 변형 ksx · ksy (Q&A 10/1 Q20) — 매 틱 _k_schedule 이 설정

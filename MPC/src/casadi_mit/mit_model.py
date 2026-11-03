@@ -336,7 +336,8 @@ class MitModel:
         self._marker_pose = {n: (np.zeros(3), np.array([1.0, 0, 0, 0])) for n in DEBUG_MARKER_NAMES}
         self._marker_props = self._compile_marker_props()
 
-        # 다리 동역학용 scratch (D4)
+        # 다리 동역학용 scratch (D4). m_ctrl = 컨트롤러가 아는 모델 (기본 = 시뮬 모델 그대로; 변형 massrand 는 시뮬만 바꾸고 이건 원래 값)
+        self.m_ctrl = m
         self._dyn = mujoco.MjData(m)
         self._dyn_key = None
         self._jacp = np.zeros((3, m.nv))
@@ -518,7 +519,7 @@ class MitModel:
         (베이스 속도 0 이면 다리 R 의 속도는 L 의 subtree 에 들어오지 않는다) → 다리별 aux 모델과 같은 값.
         01_check_model.py 가 진짜 고정-베이스 단일 다리 모델과 1e-9 이내로 같음을 보인다.
         결과는 (qpos, qvel, 몸통 자세, time) 이 같으면 캐시."""
-        m, d, s = self.m, self.d, self._dyn
+        m, d, s = self.m_ctrl, self.d, self._dyn
         b = self.base_body
         key = np.concatenate([[d.time], d.qpos[self.leg_qadr].ravel(), d.qvel[self.leg_dof].ravel(),
                               d.xpos[b], d.xquat[b]])
@@ -542,7 +543,7 @@ class MitModel:
         self._prepare_dynamics()
         if self._leg_cache[leg] is not None:
             return self._leg_cache[leg]
-        m, s = self.m, self._dyn
+        m, s = self.m_ctrl, self._dyn
         site = int(self.foot_site[leg])
         cols = self.leg_dof[leg]
         mujoco.mj_jacSite(m, s, self._jacp, self._jacr, site)
@@ -580,7 +581,7 @@ class MitModel:
 
     # 편의
     def total_mass(self) -> float:
-        return float(self.m.body_mass.sum())
+        return float(self.m_ctrl.body_mass.sum())
 
     def whole_com_W(self) -> np.ndarray:
         return self.d.subtree_com[0].copy()
