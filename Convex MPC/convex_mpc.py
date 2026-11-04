@@ -1,7 +1,7 @@
 """Convex MPC — MIT Humanoid (MuJoCo) 걷기 실행기 (발표용).
 
 Di Carlo SRB convex MPC (상태 13 · 입력 12 · 지평 22 × 0.02 s = 0.44 s · 100 Hz) + OA-MPC 선 접촉 발 제약.
-설정은 A41 (Q&A 10/6 Q76 · Q86, MPC 최종 설정 — A30 발표 설정에서 10 가지를 바꿈) — 숫자는 전부 mit_controller.yaml 에 있다 (바꾼 줄마다 원래 값 주석).
+설정은 A42 (Q&A 10/6 Q102, MPC 최종 설정 — A30 발표 설정에서 10 가지를 바꾼 A41 + 옆 착지 앞먹임 ksy 0.75) — 숫자는 전부 mit_controller.yaml 에 있다 (바꾼 줄마다 원래 값 주석).
 여기서는 속도 명령과 gait (걷기 / 서기) 만 고른다.
 엔진 (engine.py 와 나머지 모듈) 은 MPC/src/casadi_mit 의 복사본이다. 디버깅 · 실험은 그쪽에서 한다.
 
@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config
 import engine
 
-# 설정은 전부 mit_controller.yaml (A41) 에 있다. yaml 경로가 있는 값은 engine 이 그대로 읽고,
+# 설정은 전부 mit_controller.yaml (A42) 에 있다. yaml 경로가 있는 값은 engine 이 그대로 읽고,
 # 생성 인자 (profile · fix · foot · rai · ypath · armsw · OSQP) 는 yaml 의 launcher: 절을 여기서 읽어 넘긴다.
 _MERGE = ("osqp_settings", "raw_over", "swing_over", "q_state")   # --var 가 dict 로 주는 인자 — 덮지 않고 합친다
 
@@ -48,7 +48,7 @@ def launcher_kwargs() -> dict:
 
 
 def build_kwargs(gait: str, yawlead: float | None = None, push: str | None = None, extra: str | None = None) -> dict:
-    """yaml (A41) 위에 실행기 옵션을 얹는다. yawlead=None 이면 yaml 값 (swing_foot_yaw_lead_scale)."""
+    """yaml (A42) 위에 실행기 옵션을 얹는다. yawlead=None 이면 yaml 값 (swing_foot_yaw_lead_scale)."""
     kw = launcher_kwargs()
     if yawlead is not None:
         kw["yaw_lead"] = float(yawlead)
@@ -188,10 +188,10 @@ def record(vx, vy, wz, seconds, out, *, fps=50, size=(1280, 720), clean=False, h
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Convex MPC (MIT Humanoid, A41 설정) — 속도와 gait 만 고른다.",
+    ap = argparse.ArgumentParser(description="Convex MPC (MIT Humanoid, A42 설정) — 속도와 gait 만 고른다.",
                                  formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split("\n\n", 2)[2])
     ap.add_argument("--vx", type=float, default=0.0, help="전진 속도 [m/s] (뒤로는 음수, 120 s 완주 범위 −1.1 ~ 1.5)")
-    ap.add_argument("--vy", type=float, default=0.0, help="옆 속도 [m/s] (왼쪽 +, 120 s 완주 범위 +0.65 / −0.7)")
+    ap.add_argument("--vy", type=float, default=0.0, help="옆 속도 [m/s] (왼쪽 +, 120 s 완주 범위 ±0.9 — 전진 1.3 과 함께면 0.3)")
     ap.add_argument("--wz", type=float, default=0.0, help="회전 속도 [rad/s] (반시계 +, 제자리 120 s 완주 3.0)")
     ap.add_argument("--gait", default="walk", choices=["walk", "stand"], help="walk = 걷기 (기본) / stand = 제자리 서기")
     ap.add_argument("--seconds", type=float, default=120.0, help="걷기 (서기) 시간 [s] (기본 120 = 완주 판정 기준)")
@@ -222,12 +222,12 @@ def main():
 
     kw = build_kwargs(a.gait, a.yawlead, a.push, a.var)
     lead = a.yawlead if a.yawlead is not None else float(cfg.swing.swing_foot_yaw_lead_scale)
-    print(f"  Convex MPC (A41, yawlead {lead:g})  gait {a.gait}  cmd vx {a.vx:+.2f} vy {a.vy:+.2f} wz {a.wz:+.2f}"
+    print(f"  Convex MPC (A42, yawlead {lead:g})  gait {a.gait}  cmd vx {a.vx:+.2f} vy {a.vy:+.2f} wz {a.wz:+.2f}"
           f"  {a.seconds:g} s")
     if "pushes" in kw and not a.record:
         sys.exit("  외란 여러 개 (쉼표) 는 --record 에서만 된다 — 뷰어 · 헤드리스는 하나만")
     if a.headless:
-        r = engine.headless(a.vx, a.vy, a.wz, a.seconds, variant="A41", **kw)
+        r = engine.headless(a.vx, a.vy, a.wz, a.seconds, variant="A42", **kw)
         sys.exit(0 if r["pass"] else 1)
     if a.record:
         w, h = (int(x) for x in a.size.lower().split("x"))
