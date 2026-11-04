@@ -846,7 +846,7 @@ def view(vx=0.0, vy=0.0, wz=0.0, seconds=120.0, *, solver="osqp", armature=True,
     total = (0.0 if stand else walk_t) + seconds
     sync_every = 17
     before = set(threading.enumerate())
-    print("  외란: ↑ 앞 · ↓ 뒤 · ← 왼 · → 오른 (0.2 s), PageUp/PageDown ±10 N" + (f", 스크립트 {push}" if push else ""))
+    print(f"  외란: ↑ 앞 · ↓ 뒤 · ← 왼 · → 오른 ({ps['mag']:.0f} N, {push_dur:.2f} s), PageUp/PageDown ±10 N" + (f", 스크립트 {push}" if push else ""))
     with mujoco.viewer.launch_passive(m, d, key_callback=on_key) as v:
         ui_threads = [t for t in threading.enumerate() if t not in before]
         hud = MitHUD(m, model.base_body)
@@ -936,6 +936,8 @@ def main():
     ap.add_argument("--armsw", type=float, default=0.0, help="팔 반대 흔들기 k [rad/m] (Q&A 9/28, 기본 0 = 고정 팔)")
     ap.add_argument("--var", default=None, help="11_gait_quality 와 같은 변형 키 'k=v,k=v' (위 플래그보다 우선). 예: --var yawlead=0,rho=1e-5 · --var rho=1e-5,init=warm,admm=25")
     ap.add_argument("--xmax", type=float, default=None, help="명령 필터 전진 상한 [m/s] (기본 yaml 0.7)")
+    ap.add_argument("--pushmag", type=float, default=30.0, help="뷰어 키보드 외란 크기 [N] (방향키, 기본 30 — PageUp 이 방향키와 겹치는 키보드용)")
+    ap.add_argument("--pushdur", type=float, default=0.2, help="뷰어 키보드 외란 지속 [s] (기본 0.2)")
     a = ap.parse_args()
     import gait as _gait
     if _gait.GAIT_ON == 0 and not a.stand:                    # GAIT_ON=0 → 제자리 서기 (환경변수 우선)
@@ -950,7 +952,7 @@ def main():
         from configs import resolve as _resolve_cfg
         kw.update(parse_variant(_resolve_cfg(a.var)))
     if a.view:
-        view(a.vx, a.vy, a.wz, a.seconds, **kw)
+        view(a.vx, a.vy, a.wz, a.seconds, push_mag=a.pushmag, push_dur=a.pushdur, **kw)
         return
     r = headless(a.vx, a.vy, a.wz, a.seconds, log=a.log, variant=a.variant, **kw)
     sys.exit(0 if r["pass"] else 1)
