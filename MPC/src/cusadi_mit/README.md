@@ -2,6 +2,7 @@
 
 `casadi_mit` 의 복사본 + GPU 일괄 풀이기. 알고리즘은 A42 그대로다 (condensed SRB QP · Ruiz 10 · ρ 5e-5 / 1e-5 · 고정 25 회 ADMM ·
 반 칸 warm start). 경위 · 측정은 [Q&A 10/6 Q110](../../../Q&A/2026-10-06.md).
+실험실 컴퓨터의 Claude 에게 넘기는 작업 지시 · 규칙은 [LAB_HANDOFF.md](LAB_HANDOFF.md).
 
 | 파일 | 무엇 |
 |---|---|
