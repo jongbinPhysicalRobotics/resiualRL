@@ -12,6 +12,8 @@ deployed RL/unitree_rl_gym/
 # ── 실험 로그 (재생성 가능, 429 MB) — PNG 플롯만 포함 ─────────
 MPC/logs/*.npz
 MPC/logs/*.csv
+# GPU 일괄 MPC 정답 자료 (243 MB, MPC/src/cusadi_mit/20_gpu_check.py --save 로 다시 만든다)
+MPC/logs/gpu/
 
 # ── 기계별 설정 (한글 절대경로가 들어감) ──────────────────────
 .vscode/
